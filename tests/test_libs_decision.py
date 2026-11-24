@@ -352,12 +352,13 @@ class HelmetChipTest(unittest.TestCase):
     def tearDown(self):
         decision_lib.reset_state()
 
-    def _fight(self, chip=None):
+    def _fight(self, chip=None, weapons=None):
         fight = support.make_fight(
             me=builder.entity(
                 life=100, max_life=100, tp=10, max_tp=10, mp=10, max_mp=10,
                 cell=(0, 0),
-                weapons=[support.pistol(damage=10, cost=1)],
+                weapons=weapons if weapons else
+                        [support.pistol(damage=10, cost=1)],
                 chips=[chip] if chip else [],
             ),
             enemies=[builder.entity(life=100, max_life=100, cell=(1, 0))],
@@ -422,6 +423,127 @@ class HelmetChipTest(unittest.TestCase):
         self.assertFalse(any(o["obj"].name == "helmet" for o in usable))
         self.assertTrue(any(o["obj"].name == "helmet" and o["on_cooldown"]
                             for o in options))
+
+
+class OpeningShieldTest(unittest.TestCase):
+    """L'armure est jouée en ouverture de tour, avant les tirs.
+
+    Le bouclier n'est pas un « ratio » : c'est de la survie. Kepo est un
+    build force (aucune protection) : le bouclier est posé dès qu'il
+    achète un tour de survie, même si son rapport valeur/PT est moins bon
+    que celui d'un tir.
+    """
+
+    def setUp(self):
+        decision_lib.reset_state()
+
+    def tearDown(self):
+        decision_lib.reset_state()
+
+    def _fight(self, chip=None, weapons=None, tp=10):
+        fight = support.make_fight(
+            me=builder.entity(
+                life=100, max_life=100, tp=tp, max_tp=tp, mp=10, max_mp=10,
+                cell=(0, 0),
+                weapons=weapons if weapons else
+                        [support.pistol(damage=10, cost=1)],
+                chips=[chip] if chip else [],
+            ),
+            enemies=[builder.entity(life=100, max_life=100, cell=(1, 0))],
+        )
+        install(fight)
+        return fight
+
+    def _turn_after(self, fight, incoming):
+        me = fight.me
+        decision_lib.begin_turn(me)
+        decision_lib.end_turn(me)
+        me.take_damage(incoming)
+        decision_lib.begin_turn(me)
+
+    def test_the_opening_shield_is_played_before_the_first_shot(self):
+        fight = self._fight(chip=support.helmet_chip())
+        me = fight.me
+        enemy = fight.enemies[0]
+        self._turn_after(fight, 50)
+
+        decision_lib.attack(me, enemy)
+
+        shield_line = next(i for i, line in enumerate(fight.logs)
+                            if "Opening shield:" in line)
+        shot_line = next(i for i, line in enumerate(fight.logs)
+                          if "Shot #0" in line)
+        self.assertLess(shield_line, shot_line)
+        self.assertEqual(me.absoluteShield, 15)
+
+    def test_the_opening_shield_does_not_cost_us_every_shot(self):
+        # L'arme coûte 9 PT : après le bouclier (3 PT) il ne resterait que
+        # 7 PT, pas assez pour tirer. On garde le tir.
+        weapon = builder.weapon(
+            "odachi",
+            cost=9,
+            min_range=0,
+            max_range=1,
+            max_uses=1,
+            features=[
+                builder.feature(
+                    builder.Effect.DAMAGE,
+                    builder.Effect.Target.ENEMIES,
+                    100, 100,
+                )
+            ],
+        )
+        fight = self._fight(chip=support.helmet_chip(), weapons=[weapon])
+        me = fight.me
+        enemy = fight.enemies[0]
+        self._turn_after(fight, 30)
+
+        decision_lib.attack(me, enemy)
+
+        self.assertFalse(any("Opening shield:" in line
+                             for line in fight.logs))
+        self.assertTrue(any("Shot #0" in line for line in fight.logs))
+
+    def test_a_life_saving_opening_shield_is_played_even_without_any_shot(self):
+        # Même arme à 9 PT : le bouclier sauve notre mort, on l'accepte
+        # même s'il nous coûte nos tirs.
+        weapon = builder.weapon(
+            "odachi",
+            cost=9,
+            min_range=0,
+            max_range=1,
+            max_uses=1,
+            features=[
+                builder.feature(
+                    builder.Effect.DAMAGE,
+                    builder.Effect.Target.ENEMIES,
+                    100, 100,
+                )
+            ],
+        )
+        fight = self._fight(chip=support.helmet_chip(), weapons=[weapon])
+        me = fight.me
+        enemy = fight.enemies[0]
+        self._turn_after(fight, 50)  # 50 PV restants, l'ennemi frappe 50
+
+        decision_lib.attack(me, enemy)
+
+        self.assertTrue(any("Opening shield:" in line
+                            for line in fight.logs))
+        self.assertTrue(any("(sauve la mort)" in line
+                            for line in fight.logs))
+
+    def test_the_opening_shield_is_not_played_when_it_saves_nothing(self):
+        fight = self._fight(chip=support.helmet_chip())
+        me = fight.me
+        enemy = fight.enemies[0]
+        self._turn_after(fight, 77)  # 23 PV restants, coup de 77
+
+        decision_lib.attack(me, enemy)
+
+        self.assertFalse(any("Opening shield:" in line
+                             for line in fight.logs))
+        self.assertTrue(any("Shot #0" in line for line in fight.logs))
 
 
 class ShotLogTest(unittest.TestCase):

@@ -311,6 +311,31 @@ def turns_to_death(life, incoming, blocked=0.0, duration=0):
     return duration + _ceil_div(life - shielded_total, incoming)
 
 
+def shield_survival(me, o):
+    # Survie gagnée par un bouclier, et dégâts qu'il bloque par tour.
+    #
+    # Renvoie un dict :
+    #   extra   : nombre de tours de survie gagnés (0 si le bouclier ne
+    #             repousse pas la mort)
+    #   blocked : dégâts bloqués par tour (relatif en % + absolu)
+    #   without : tours avant de mourir sans le bouclier
+    #   with    : tours avant de mourir avec le bouclier
+    incoming = _INCOMING
+    if incoming <= 0:
+        return {"extra": 0, "blocked": 0.0, "without": 999, "with": 999}
+    parts = o["parts"]
+    blocked = blocked_damage(incoming, parts["shield_relative"],
+                              parts["shield_absolute"])
+    if blocked <= 0:
+        return {"extra": 0, "blocked": 0.0, "without": 999, "with": 999}
+    duration = parts["shield_turns"] if parts["shield_turns"] > 0 else 1
+    life = me.life
+    without = turns_to_death(life, incoming)
+    with_shield = turns_to_death(life, incoming, blocked, duration)
+    return {"extra": max(0, with_shield - without), "blocked": blocked,
+            "without": without, "with": with_shield}
+
+
 def shield_value(me, o, usable, enemy):
     # Valeur d'une puce de bouclier, sur l'échelle "valeur / TP".
     #
@@ -325,18 +350,11 @@ def shield_value(me, o, usable, enemy):
     incoming = _INCOMING
     if incoming <= 0:
         return 0.0
-    parts = o["parts"]
-    blocked = blocked_damage(incoming, parts["shield_relative"],
-                              parts["shield_absolute"])
-    if blocked <= 0:
-        return 0.0
-    duration = parts["shield_turns"] if parts["shield_turns"] > 0 else 1
-    life = me.life
-    death_without = turns_to_death(life, incoming)
-    death_with = turns_to_death(life, incoming, blocked, duration)
-    extra = death_with - death_without
+    survival = shield_survival(me, o)
+    extra = survival["extra"]
     if extra <= 0:
         return 0.0
+    life = me.life
     # Mort imminente : le bouclier nous sauve, il passe avant tout.
     if life <= incoming:
         return MANDATORY
@@ -345,9 +363,56 @@ def shield_value(me, o, usable, enemy):
     per_turn = damage_per_turn(me, usable, enemy)
     if per_turn <= 0:
         return 0.0
-    if _ceil_div(enemy.life, per_turn) <= death_without:
+    if _ceil_div(enemy.life, per_turn) <= survival["without"]:
         return 0.0
     return extra * per_turn
+
+
+def can_still_shoot(me, usable, spent):
+    # Reste-t-il de quoi tirer après avoir payé `spent` points de tour ?
+    #
+    # Un bouclier qui nous laisse sans aucun tir nous condamne : on ne le
+    # joue dans ce cas que s'il sauve notre mort (valeur MANDATORY).
+    budget = me.tp - spent
+    if budget <= 0:
+        return False
+    for o in usable:
+        if o["kind"] != "weapon" or not o["has_damage"]:
+            continue
+        if o["cost"] + o["switch"] <= budget:
+            return True
+    return False
+
+
+def shield_plan(me, usable, enemy):
+    """Armure d'ouverture : on pose le bouclier AVANT de tirer.
+
+    Le bouclier n'est pas un « ratio » : c'est de la survie. Kepo est un
+    build force (aucune protection) : le bouclier est donc joué en
+    ouverture de tour dès qu'il achète un tour de survie, même si son
+    rapport valeur/PT est moins bon que celui d'un tir (on accepte de
+    perdre un tir pour gagner un tour).
+
+    Renvoie (option, valeur) ou (None, 0).
+    """
+    best = None
+    best_value = 0.0
+    for o in usable:
+        if o["kind"] != "chip" or o["used"]:
+            continue
+        if not o["is_shield"] or o["has_damage"]:
+            continue
+        if o["cost"] > me.tp:
+            continue
+        value = shield_value(me, o, usable, enemy)
+        if value <= 0:
+            continue  # le bouclier ne repousse pas la mort : inutile
+        if value < MANDATORY and not can_still_shoot(me, usable, o["cost"]):
+            continue  # il nous laisserait sans aucun tir
+        if value > best_value:
+            best_value = value
+            best = o
+    return best, best_value
 
 
 def buff_key(o):
@@ -804,7 +869,20 @@ def attack(me, enemy):
     # que les stats affichées soient celles de départ).
     log_identity(me, all_options)
 
-    # Build "force" : le buff part AVANT les tirs, il multiplie tous les
+    # Ouverture de tour : l'armure d'abord (c'est de la survie, pas un
+    # ratio), puis le buff de force.
+    opening_shield, shield_worth = shield_plan(me, usable, enemy)
+    if opening_shield != None:
+        survival = shield_survival(me, opening_shield)
+        details = "; ".join(opening_shield["parts"]["details"])
+        urgent = " (sauve la mort)" if shield_worth >= MANDATORY else ""
+        logs_lib.log(f"Opening shield: {opening_shield['obj']} [{details}] "
+                     f"(+{survival['extra']} turn(s) of survival, "
+                     f"~{survival['blocked']:.0f} dmg blocked per hit)"
+                     f"{urgent}")
+        execute(me, opening_shield, enemy, 0)
+
+    # Build "force" : le buff part AVANT des tirs, il multiplie tous les
     # tirs du tour (et ceux des tours suivants, si le buff dure).
     opening_buff, buff_gain_value = buff_plan(me, usable, enemy)
     if opening_buff != None:

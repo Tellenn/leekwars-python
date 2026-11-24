@@ -119,14 +119,22 @@ Conséquences sur le code :
   `Kepo_solo.py`. `False` (défaut) = DPS pur, on garde le tempo offensif ;
   `True` = comportement « shoot and hide ». Un test verrouille les deux
   comportements ;
-- les **puces de bouclier** sont modélisées mais restent marginales : la
-  valeur d'un bouclier = les tours de survie qu'il achète, convertis en
-  dégâts encore infligables (`decision_lib.shield_value()`). Les dégâts
-  de l'ennemi ne sont pas modélisés : ils sont **mesurés** d'un tour à
-  l'autre (`decision_lib.begin_turn()` compare nos PV de la fin du tour
-  précédent à nos PV actuels). Un bouclier n'est joué que s'il évite la
-  mort (`MANDATORY`) ou s'il achète un tour de survie alors qu'on perd le
-  combat ; sinon il vaut 0 et l'IA garde le tempo offensif ;
+- les **puces de bouclier** sont modélisées et jouées en **ouverture de
+  tour** (`decision_lib.shield_plan()`) : le bouclier n'est pas un « ratio »,
+  c'est de la survie. Un build force (Kepo) n'a aucune protection, donc
+  l'armure est posée **avant les tirs** dès qu'elle achète un tour de
+  survie, même si son rapport valeur/PT est moins bon que celui d'un tir
+  (on accepte de perdre un tir pour gagner un tour). La valeur d'un
+  bouclier = les tours de survie qu'il achète, convertis en dégâts encore
+  infligables (`decision_lib.shield_value()`). Les dégâts de l'ennemi ne
+  sont pas modélisés : ils sont **mesurés** d'un tour à l'autre
+  (`decision_lib.begin_turn()` compare nos PV de la fin du tour précédent à
+  nos PV actuels). Un bouclier n'est joué que s'il évite la mort
+  (`MANDATORY`) ou s'il achète un tour de survie alors qu'on perd le
+  combat ; sinon il vaut 0 et l'IA garde le tempo offensif. Exception : si
+  le bouclier nous laisserait **sans aucun tir**
+  (`decision_lib.can_still_shoot()`), on ne le joue que s'il sauve notre
+  mort ;
 - la **portée de l'ennemi est modélisée** (`libs/threat_lib.py`) : sa zone
   de menace est le disque de rayon `portée de son arme + ses PM` centré sur
   sa case. Quand on ne peut pas le toucher, on se place **hors de cette
@@ -142,7 +150,9 @@ Flux d'un tour (`ai.turn()`) :
 2. `decision_lib.begin_turn()` — mesure des dégâts reçus au tour précédent.
 3. `equipment_lib.equip_starting_weapon()` — équipe la meilleure arme
    (ratio dégâts/PT) si aucune n'est en main.
-4. `decision_lib.attack()` — **buff d'ouverture d'abord** (s'il est
+4. `decision_lib.attack()` — **armure d'ouverture d'abord** (le bouclier
+   est de la survie, pas un ratio : il est posé avant les tirs dès qu'il
+   achète un tour de survie), puis **buff d'ouverture** (s'il est
    rentable), puis boucle : on **re-score** toutes les options à chaque
    itération (les PV, les PT et les boucliers changent), on exécute la
    meilleure (attaque / soin / buff / bouclier), on mesure les dégâts
@@ -177,6 +187,7 @@ Le rapport de combat est lu après coup : il ne doit pas être noyé.
 | état | chaque tour | PV de l'ennemi, boucliers, PV manquants |
 | rentabilité | chaque tour | une ligne : `objet valeur/PT=score` par option encore jouable — pour une arme, la **valeur du tour** (tirs possibles × dégâts) et les PT **réellement dépensés** (équipement + tirs, plafonnés par `maxUses`) ; pour un buff, le gain estimé sur sa **durée** |
 | actions | chaque action | une ligne : tir (dégâts réels **vs dégâts attendus hors vol de vie**), refus du moteur nommé (`refused (MAX_USES)`), soin, buff (avec la force avant/après), bouclier, changement d'arme | ⚠️ la distance d'un tir qui **tue** la cible est journalisée après sa mort (sa case a changé) : elle ne reflète plus la portée |
+| ouverture | chaque tour qui le mérite | `Opening shield:` (armure posée avant les tirs : tours de survie gagnés, dégâts bloqués, `sauve la mort` si elle évite la mort) et `Opening buff:` (buff de force joué avant les tirs) |
 | positionnement | chaque repositionnement | portée ennemie + zone de menace, distance visée, distance obtenue (`Kiting:` / `Position:`) |
 
 Mécanique : `libs/logs_lib.log_once(clé, message)` n'écrit qu'une fois par
@@ -434,6 +445,8 @@ dans `scenarios/duel.json`).
 | 40 | Le **coût du changement d'arme** n'était pas remis à jour après un `setWeapon` : l'IA croyait pouvoir ré-équiper gratuitement l'arme précédente (et aurait tiré avec l'arme en main en croyant tirer avec l'autre) | `libs/decision_lib.py` | **corrigé** — `refresh_switch_flags()` recalcule le coût (1 PT) de chaque arme après un changement ; `execute()` vérifie le retour de `setWeapon` et refuse de tirer si le changement est refusé |
 | 41 | L'IA **se cachait même quand elle n'avait pas tiré** : en coupant la ligne de vue de la cible, elle s'interdisait tout tir ultérieur (combat #54913368 : 64 tours sans un seul tir) | `Kepo_solo.py`, `libs/decision_lib.py` | **corrigé** — la fuite (`HIDE_AFTER_ATTACK`) n'a lieu que si l'IA a réellement tiré |
 | 42 | Le **plan de placement** ignorait la portée minimale et l'alignement : l'IA se parquait à une distance où aucune de ses armes ne pouvait toucher la cible, et ne cherchait pas à s'aligner | `libs/threat_lib.py`, `libs/decision_lib.py` | **corrigé** — fenêtres de tir par arme (`my_windows`), distance de tir (`firing_distance`), case de tir (`firing_cell`) ; reculer si l'ennemi est trop près, s'aligner sinon |
+| 43 | L'armure (puce de bouclier) n'était jouée que si son **rapport valeur/PT** battait celui d'un tir : sur un build force sans aucune protection, l'IA restait sans bouclier jusqu'au dernier moment, et le bouclier pouvait être joué **après** des tirs (donc après avoir subi le coup) | `libs/decision_lib.py` | **corrigé** — `shield_plan()` : l'armure est jouée en **ouverture de tour**, avant les tirs, dès qu'elle achète un tour de survie (`shield_survival()`), quel que soit le rapport ; `can_still_shoot()` interdit de se retrouver sans aucun tir (sauf si le bouclier sauve la mort) |
+| 44 | La valeur d'un tour de survie est approchée : `damage_per_turn()` estime le nombre de tirs par `TP / coût` sans tenir compte du plafond `maxUses` (l'épée à 1 tir par tour est donc surestimée), et l'hypothèse « 1 tour de survie = 1 tour de dégâts » ne valorise pas les PV économisés quand le nombre de tours ne change pas | `libs/decision_lib.py` | hypothèse assumée — à confronter à un combat de test (le Casque, +15 de bouclier absolu, ne « vaut » que s'il repousse la mort) |
 
 ---
 
