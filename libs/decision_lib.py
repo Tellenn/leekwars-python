@@ -200,37 +200,59 @@ def option_score(me, o, usable, enemy):
     return value / total_cost, value
 
 
-def log_report(me, usable, options, enemy):
+def log_identity(me, options):
+    # Bloc "une fois par combat" : nom de l'IA, stats propres, équipement.
+    # Écrit avant la première action pour refléter les stats de départ.
     if not logs_lib.ENABLED:
         return
-    rel, absolu = analysis_lib.shields(enemy)
+
+    weapons = analysis_lib.defensive_list(me, "weapons")
+    chips = analysis_lib.defensive_list(me, "chips")
     m = analysis_lib.force_crit_multiplier(me)
-    logs_lib.log(f"Strength {me.strength}, agility {me.agility} "
-                 f"(crit: {me.agility / 10}% chance of x1.3), "
-                 f"wisdom {me.wisdom}, science {me.science}")
-    logs_lib.log(f"Multiplier on classic damage: x{m}")
-    logs_lib.log(f"Enemy current shields: relative {rel}, absolute {absolu}")
-    logs_lib.log(f"My missing HP: {analysis_lib.missing_life(me)}")
-    logs_lib.log(f"Equipment read: "
-                 f"{len(analysis_lib.defensive_list(me, 'weapons'))} weapon(s), "
-                 f"{len(analysis_lib.defensive_list(me, 'chips'))} chip(s)")
-    logs_lib.log("=== Profitability report (value / TP, equip cost included) ===")
+    logs_lib.log_once(
+        "header",
+        f"{logs_lib.AI_NAME} | strength {me.strength} "
+        f"(crit {me.agility / 10}%), wisdom {me.wisdom}, science {me.science}"
+        f" | damage x{m:.2f} | {len(weapons)} weapon(s), {len(chips)} chip(s)")
+
+    items = []
+    ignored = []
+    for o in options:
+        label = str(o["obj"])
+        if o["has_damage"] or o["is_buff"] or o["is_heal"]:
+            details = "; ".join(o["parts"]["details"])
+            items.append(f"{label} [{details}]" if details else label)
+        else:
+            ignored.append(label)
+    if items:
+        logs_lib.log_once("items", "Items: " + " ; ".join(items))
+    if ignored:
+        logs_lib.log_once("ignored",
+                          "Ignored (no damage, no buff, no heal): "
+                          + ", ".join(ignored))
+
+
+def log_report(me, usable, options, enemy):
+    # Journal de combat, à chaque tour : état du combat et rapport de
+    # rentabilité, en une ligne par option.
+    if not logs_lib.ENABLED:
+        return
+
+    rel, absolu = analysis_lib.shields(enemy)
+    logs_lib.log(f"Enemy {enemy.life} HP (shields {rel}/{absolu}) | "
+                 f"me {me.life}/{me.maxLife} HP "
+                 f"(missing {analysis_lib.missing_life(me)})")
+
+    lines = []
     for o in usable:
         total_cost = o["cost"] + o["switch"]
         if total_cost <= 0:
             continue
+        if o["kind"] == "chip" and o["used"]:
+            continue  # puce déjà jouée ce tour : plus une option
         score, value = option_score(me, o, usable, enemy)
-        tag = "heal" if o["is_heal"] else ("buff" if o["is_buff"] else o["kind"])
-        logs_lib.log(f"{tag} {o['obj']} : value {value} for {total_cost} TP "
-                     f"({o['cost']} use + {o['switch']} to equip) "
-                     f"=> score {score} [{'; '.join(o['parts']['details'])}]")
-    ignored = []
-    for o in options:
-        if not o["has_damage"] and not o["is_buff"] and not o["is_heal"]:
-            ignored.append(str(o["obj"]))
-    if len(ignored) > 0:
-        logs_lib.log("Equipment ignored (no immediate damage, no offensive "
-                     "buff, no heal): " + ", ".join(ignored))
+        lines.append(f"{o['obj']} {value:.1f}/{total_cost}TP={score:.1f}")
+    logs_lib.log("Profitability: " + (" ; ".join(lines) if lines else "none"))
 
 
 def execute(me, o, enemy, shot):
@@ -241,24 +263,21 @@ def execute(me, o, enemy, shot):
     # viserait la case du lanceur et ne toucherait personne).
     if o["kind"] == "weapon":
         if o["switch"] > 0:
-            logs_lib.log(f"Switching weapon to {o['obj']} "
-                         f"(1 TP included in the score)")
+            logs_lib.log(f"Switch: {o['obj']} (1 TP included in the score)")
             me.setWeapon(o["obj"])  # costs 1 TP
             o["switch"] = 0
-        logs_lib.log(f"Shot #{shot} with {o['obj']} (enemy HP before: "
-                     f"{enemy.life})")
         me.useWeapon(enemy)
         return True
+    life_before = me.life
     me.useChip(o["obj"], enemy if o["has_damage"] else me)
     o["used"] = True
     if o["is_heal"]:
-        logs_lib.log(f"Casting heal chip {o['obj']} (value "
-                     f"{heal_value(me, o)})")
+        logs_lib.log(f"Heal: {o['obj']} (+{me.life - life_before:.1f} HP)")
     elif o["is_buff"]:
-        logs_lib.log(f"Casting buff chip {o['obj']}")
+        details = "; ".join(o["parts"]["details"])
+        logs_lib.log(f"Buff: {o['obj']} [{details}]")
     else:
-        logs_lib.log(f"Casting chip {o['obj']} (enemy HP before: "
-                     f"{enemy.life})")
+        logs_lib.log(f"Chip: {o['obj']} -> enemy {enemy.life} HP")
     return False
 
 
@@ -268,13 +287,17 @@ def attack(me, enemy):
     # Real vs expected damage is measured after each shot.
     usable, all_options = build_options(me)
 
+    # Bloc d'identité : une fois par combat (écrit avant toute action, pour
+    # que les stats affichées soient celles de départ).
+    log_identity(me, all_options)
+
     # Build "force" : le buff de force part AVANT les tirs, il multiplie
     # tous les tirs du tour (et les suivants, si le buff dure).
     opening_buff, buff_gain = strength_buff_plan(me, usable, enemy)
     if opening_buff != None:
-        logs_lib.log(f"Opening with the strength buff {opening_buff['obj']} "
-                     f"(+{opening_buff['parts']['buff_strength']} strength, "
-                     f"estimated gain {buff_gain} damage this turn)")
+        logs_lib.log(f"Opening buff: {opening_buff['obj']} "
+                     f"(+{opening_buff['parts']['buff_strength']:.0f} strength, "
+                     f"~+{buff_gain:.0f} dmg this turn)")
         execute(me, opening_buff, enemy, 0)
 
     log_report(me, usable, all_options, enemy)
@@ -302,20 +325,18 @@ def attack(me, enemy):
             if damage_dealt > 0:
                 did_hit = True
                 gap = damage_dealt - best_value
-                logs_lib.log(f"=> {damage_dealt} real damage (expected: "
-                             f"{best_value}, gap {gap}, enemy HP: "
-                             f"{enemy.life})")
+                logs_lib.log(f"Shot #{shot} ({best['obj']}): {damage_dealt} dmg "
+                             f"(expected {best_value:.1f}, gap {gap:.1f}) "
+                             f"-> enemy {enemy.life} HP")
             else:
                 # Abnormal case (max uses reached, cooldown...):
                 # drop this option for this turn.
-                logs_lib.log(f"=> 0 real damage, option {best['obj']} dropped")
+                logs_lib.log(f"Shot #{shot} ({best['obj']}): no damage, "
+                             f"option dropped")
                 best["parts"]["amp_raw"] = 0
                 best["parts"]["flat_sub"] = 0
                 best["parts"]["nova_raw"] = 0
                 best["parts"]["kill"] = False
-        else:
-            logs_lib.log(f"=> action done (enemy HP: {enemy.life}, "
-                         f"my HP: {me.life})")
         shot += 1
     return did_hit
 

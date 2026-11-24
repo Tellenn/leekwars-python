@@ -152,7 +152,7 @@ class AttackLoopTest(unittest.TestCase):
 
         self.assertTrue(did_hit)
         self.assertEqual(enemy.life, 0)
-        self.assertTrue(any("real damage" in line for line in fight.logs))
+        self.assertTrue(any("Shot #" in line for line in fight.logs))
 
     def test_attack_loop_spends_tp(self):
         fight = support.make_fight(

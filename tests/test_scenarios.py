@@ -68,7 +68,7 @@ class TurnScenarioTest(unittest.TestCase):
         self.assertEqual(fight.me.life, 50)
         self.assertLess(fight.enemies[0].life, 100)
         heal_index = next(i for i, line in enumerate(fight.logs)
-                          if "Casting heal chip" in line)
+                          if "Heal: " in line)
         shot_index = next(i for i, line in enumerate(fight.logs)
                           if "Shot #" in line)
         self.assertLess(heal_index, shot_index)
@@ -104,9 +104,9 @@ class TurnScenarioTest(unittest.TestCase):
 
         ai.turn()
 
-        self.assertTrue(any("Profitability report" in line
+        self.assertTrue(any("Profitability:" in line
                             for line in fight.logs))
-        self.assertTrue(any("Strength" in line for line in fight.logs))
+        self.assertTrue(any("Kepo_solo | strength" in line for line in fight.logs))
 
     def test_ai_tries_to_break_the_line_of_sight_at_the_end_of_the_turn(self):
         fight = support.make_fight(
@@ -155,7 +155,7 @@ class TurnScenarioTest(unittest.TestCase):
         # la puce (12 dégâts pour 1 PT) est plus rentable que l'arme
         # (1 dégât pour 3 PT) -> elle est utilisée sur l'ennemi
         self.assertLessEqual(fight.enemies[0].life, 88)
-        self.assertTrue(any("Casting chip" in line for line in fight.logs))
+        self.assertTrue(any("Chip: " in line for line in fight.logs))
 
     def test_ai_casts_the_strength_buff_before_shooting(self):
         # Build force : le buff de force part en premier, il amplifie tous
@@ -174,7 +174,7 @@ class TurnScenarioTest(unittest.TestCase):
         ai.turn()
 
         buff_index = next(i for i, line in enumerate(fight.logs)
-                          if "Casting buff chip" in line)
+                          if "Buff: " in line)
         shot_index = next(i for i, line in enumerate(fight.logs)
                           if "Shot #" in line)
         self.assertLess(buff_index, shot_index)
@@ -197,7 +197,7 @@ class TurnScenarioTest(unittest.TestCase):
         ai.turn()
 
         self.assertEqual(fight.me.strength, 100)
-        self.assertFalse(any("Casting buff chip" in line
+        self.assertFalse(any("Buff: " in line
                              for line in fight.logs))
 
     def test_ai_can_stay_in_range_instead_of_fleeing(self):

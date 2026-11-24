@@ -18,6 +18,7 @@ if ROOT not in sys.path:
     sys.path.insert(0, ROOT)
 
 from leekwars_api import builder, install  # noqa: E402
+import libs.logs_lib  # noqa: E402
 
 # Le code de l'IA lit des globaux du SDK (Effect, Fight, Debug) **au moment
 # de l'import** de ses modules (ex. libs/constants_lib.py). Sur le site ces
@@ -45,6 +46,9 @@ def load_ai(fight):
     niveau module, il faut donc le recharger après chaque changement de
     scénario)."""
     install(fight)
+    # nouveau combat = journal repart de zéro (le "une fois par combat"
+    # des logs est réarmé)
+    libs.logs_lib.reset()
     ai = importlib.import_module("Kepo_solo")
     importlib.reload(ai)
     return ai

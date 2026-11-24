@@ -105,6 +105,22 @@ Flux d'un tour (`ai.turn()`) :
 5. `decision_lib.hide()` — **seulement si `HIDE_AFTER_ATTACK`** (par défaut
    on ne fuit pas : Kepo est un DPS).
 
+### Politique de journal
+
+Le rapport de combat est lu après coup : il ne doit pas être noyé.
+
+| Bloc | Fréquence | Contenu |
+|---|---|---|
+| identité | **une fois par combat** | nom de l'IA, force/agilité/sagesse/science, multiplicateur de dégâts, inventaire (effets parsés), équipement ignoré |
+| état | chaque tour | PV de l'ennemi, boucliers, PV manquants |
+| rentabilité | chaque tour | une ligne : `objet valeur/PT=score` par option encore jouable |
+| actions | chaque action | une ligne : tir (dégâts réels vs attendus), soin, buff, changement d'arme |
+
+Mécanique : `libs/logs_lib.log_once(clé, message)` n'écrit qu'une fois par
+combat (réarmé automatiquement quand le compteur de tours repart de zéro ;
+`logs_lib.reset()` le force dans les tests). Le nom affiché vient de
+`libs/logs_lib.AI_NAME` — à aligner avec le nom du fichier d'entrée.
+
 **Échelle de décision** : tout est comparé en `valeur / PT`
 (le coût d'équipement d'une arme — 1 PT — est inclus dans le ratio) :
 
