@@ -232,5 +232,15 @@ def missing_life(entity):
 
 
 def in_range(obj, me, target):
+    # Portée de l'objet, et ligne de vue *seulement si l'objet l'exige* :
+    # certaines puces (trébuchet, étincelle, repiquage...) frappent sans
+    # ligne de vue (`Item.needsLos`), d'autres (lance-flammes, Flamme...)
+    # l'exigent. Sans cette distinction, l'IA gaspille une action sur un
+    # tir que le moteur refuse (ligne de vue coupée).
     d = me.cell.distance(target.cell)
-    return d >= obj.minRange and d <= obj.maxRange
+    if d < obj.minRange or d > obj.maxRange:
+        return False
+    if getattr(obj, "needsLos", True):
+        if not me.cell.lineOfSight(target.cell):
+            return False
+    return True

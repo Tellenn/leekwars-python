@@ -125,7 +125,7 @@ Le rapport de combat est lu après coup : il ne doit pas être noyé.
 | identité | **une fois par combat** | nom de l'IA, force/agilité/sagesse/science, multiplicateur de dégâts, inventaire (effets parsés), équipement ignoré |
 | état | chaque tour | PV de l'ennemi, boucliers, PV manquants |
 | rentabilité | chaque tour | une ligne : `objet valeur/PT=score` par option encore jouable |
-| actions | chaque action | une ligne : tir (dégâts réels vs attendus), soin, buff, changement d'arme |
+| actions | chaque action | une ligne : tir (dégâts réels **vs dégâts attendus hors vol de vie**), refus du moteur nommé (`refused (MAX_USES)`), soin, buff, bouclier, changement d'arme |
 
 Mécanique : `libs/logs_lib.log_once(clé, message)` n'écrit qu'une fois par
 combat (réarmé automatiquement quand le compteur de tours repart de zéro ;
@@ -244,6 +244,7 @@ Récapitulatif de l'API Python : **`docs/leekwars-api-python.md`**.
 | Effets | 59 types + masques de cibles (`ENEMIES=1`, `ALLIES=2`, `CASTER=4`, `NON_SUMMONS=8`, `SUMMONS=16`) | `docs/encyclopedia/effets.md` |
 | Armes : coût et plafond | `Item.cost` = PT par utilisation, `Item.maxUses` = utilisations **par tour** (compteur `Entity.itemUses()`), dégâts de base = `value1 + rand(0..value2)` | mesuré sur le moteur (combat de test #54910256 : pistol `cost=3`, `maxUses=4` → 4 tirs puis refus) |
 | Érosion | les dégâts subis réduisent la **vie maximum** : 5 % des dégâts classiques, 10 % du poison, +10 % sur un coup critique ; les boucliers atténuent l'érosion | `docs/encyclopedia/erosion.md` |
+| Ligne de vue | `Item.needsLos` : la plupart des armes l'exigent, 11 puces du catalogue frappent sans (trébuchet, étincelle, repiquage, picquant…) | `docs/leekwars-api-python.md` + données du jeu (`weapon/get-all`, `chip/get-all`) |
 
 ---
 
@@ -319,16 +320,17 @@ dans `scenarios/duel.json`).
 | 10 | `Kepo_solo.py` appelait `turn()` à la fin du module : le moteur rejoue déjà `turn()` chaque tour → tir en double au tour 1 | `Kepo_solo.py` | **corrigé** (appel retiré) — **à confirmer au premier import sur le site** |
 | 11 | `Kepo_solo.py` n'est pas un nom imposé par la plateforme (le moteur exécute le fichier `aiPath` de l'IA) : c'est une convention de ce dépôt | `Kepo_solo.py` | documenté |
 | 12 | `EFFECT_KILL` valait 0 dégât dans le modèle : l'IA ne choisissait jamais une arme d'exécution | `libs/analysis_lib.py` | **corrigé** (`kill` → la valeur vaut les PV restants de la cible) |
-| 13 | Les actions dont le code de retour est négatif (`INVALID_POSITION`, `NOT_ENOUGH_TP`…) ne sont pas distinguées : l'IA suppose que l'action a réussi | `libs/decision_lib.py` | à traiter (l'option est déjà neutralisée après 0 dégât ; le mock expose désormais les codes officiels) |
-| 14 | Le mock n'applique pas le « 5 % du montant retiré » sur les PV maximum (règle du jeu sur les dégâts) | `leekwars_api/fight.py` | écart assumé (sans impact sur les décisions) |
+| 13 | Les actions dont le code de retour est négatif (`INVALID_POSITION`, `NOT_ENOUGH_TP`…) ne sont pas distinguées : l'IA suppose que l'action a réussi | `libs/decision_lib.py` | **corrigé** (le code de retour de `useWeapon`/`useChip` est lu : un refus est journalisé avec son nom et l'option est neutralisée pour le tour) |
+| 14 | Le mock n'applique pas le « 5 % du montant retiré » sur les PV maximum (règle du jeu sur les dégâts) | `leekwars_api/fight.py` | **corrigé** (c'est l'érosion, voir #20) |
 | 15 | `useChip(chip)` sans cible : une puce à dégâts visait la case du lanceur et ne touchait jamais l'ennemi | `libs/decision_lib.py` | **corrigé** (cible explicite : l'ennemi pour une puce à dégâts, le lanceur sinon) |
 | 16 | Sur un build **force**, le buff de force devrait être lancé **avant** les tirs (il multiplie tous les tirs suivants) ; le scoring actuel le traite comme une option concurrente des attaques, sur un horizon d'un seul tour | `libs/decision_lib.py` | **corrigé** (`strength_buff_plan()` : le buff de force ouvre le tour s'il améliore le total de dégâts du tour) |
 | 17 | La fuite de fin de tour (`HIDE_AFTER_ATTACK`) est désactivée par défaut : choix « DPS pur » | `Kepo_solo.py` | assumé — à réactiver si le build commence à lose des PV plus vite qu'il n'en inflige |
 | 18 | Le plafond d'utilisations d'une arme par tour (`Item.maxUses`, compteur `Entity.itemUses()`) n'est pas modélisé : l'IA tente une utilisation de trop, le moteur la refuse (0 dégât, « option dropped ») et 8 à 11 PT restent inutilisés | `libs/decision_lib.py` | à traiter (vérifié sur le moteur : `cost` = PT par tir, `maxUses` = tirs par tour — ex. pistol 3 PT / 4 tirs) |
-| 19 | Le « expected » affiché dans le journal des tirs mélange dégâts et **vol de vie** (sagesse 100 → +10 %) : le « gap » est biaisé du vol de vie | `libs/decision_lib.py` | à traiter (le modèle est juste : 54.9 dégâts attendus vs 54.4 observés sur un vrai combat) |
+| 19 | Le « expected » affiché dans le journal des tirs mélange dégâts et **vol de vie** (sagesse 100 → +10 %) : le « gap » est biaisé du vol de vie | `libs/decision_lib.py` | **corrigé** (la ligne de tir compare les dégâts attendus hors vol de vie ; la ligne de rentabilité garde la valeur « dégâts + vol de vie ») |
 | 20 | Le moteur **réduit les PV maximum** quand on perd de la vie (3000 → 2958 → 2918 → 2819 sur le combat de test) ; le mock gardait `maxLife` constant | `leekwars_api/fight.py` | **corrigé** (érosion : 5 % des dégâts subis, +10 % sur un coup critique, 10 % pour le poison — fr/Érosion) |
 | 21 | Les boucliers du mock ne **expiraient jamais** (état permanent) alors que le moteur les porte sur des effets temporaires | `leekwars_api/fight.py` | **corrigé** (`_refresh_shields()` recalcule les boucliers depuis les effets actifs à chaque tour) |
 | 22 | Les puces de bouclier étaient ignorées (« no damage, no buff, no heal ») : l'IA ne modélisait ni `RELATIVE_SHIELD` ni `ABSOLUTE_SHIELD` | `libs/analysis_lib.py`, `libs/decision_lib.py` | **corrigé** (parsing + `shield_value()` ; le bouclier n'est joué que s'il évite la mort ou achète un tour de survie) |
+| 23 | L'IA ignorait la **ligne de vue** : elle tentait un tir que le moteur refusait (`INVALID_POSITION`) et perdait une action ; à l'inverse, les objets qui frappent **sans** ligne de vue (`needsLos = False`) doivent rester utilisables | `libs/analysis_lib.py` | **corrigé** (`in_range()` vérifie la ligne de vue seulement si l'objet l'exige) |
 
 ---
 
@@ -343,9 +345,30 @@ dans `scenarios/duel.json`).
    `docs:` / `refactor:`. Un commit = une intention.
 5. `make dist` puis copier `dist/leekwars/` dans l'éditeur Leek Wars (ou
    re-cloner le dépôt via le panneau git de l'éditeur).
-6. Tester dans l'arène du site et lire le journal de combat
-   (`Debug.log` → rapport de fin de combat) pour confronter les dégâts
-   attendus aux dégâts réels.
+6. **Vérification runtime — obligatoire après chaque implémentation.**
+   Déployer le code (`make dist` + copie dans l'éditeur, ou synchronisation
+   git du dépôt du site), puis **jouer un combat de test avec ce code
+   déployé** et lire le journal de combat (`Debug.log` → rapport de fin de
+   combat).
+   - Via le MCP Leek Wars : `list_test_scenarios` →
+     `start_test_fight({scenario_id, ai_id})` →
+     `get_fight({fight_id, include_logs: true})`.
+   - Ou dans l'arène de test du site (combat non classé).
+
+   On vérifie qu'il n'y a **aucune erreur de runtime** :
+   - l'IA démarre (« Booting up … ») et joue des tours ;
+   - aucune exception dans le journal (le traceback y apparaît si le code
+     lève : `AttributeError`, `IndexError`, import manquant…) ;
+   - les lignes attendues sont présentes (état, rentabilité, actions) et
+     pas de boucle « No usable option anymore » ;
+   - les dégâts réels restent dans l'intervalle prévu par le modèle.
+
+   Le mock ne remplace pas ce test : il n'applique ni les contraintes du
+   bac à sable ni les règles du moteur. Un code qui passe `make test` mais
+   plante sur le site n'est **pas** validé.
+7. Confronter les dégâts attendus aux dégâts réels (journal du combat) et
+   corriger le modèle si l'écart est systématique (pas du bruit de
+   dés).
 
 ---
 

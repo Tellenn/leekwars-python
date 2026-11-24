@@ -300,5 +300,81 @@ class ShieldDecisionTest(unittest.TestCase):
                             for line in fight.logs))
 
 
+class ShotLogTest(unittest.TestCase):
+    """Journal des tirs : dégâts attendus (hors vol de vie) et refus."""
+
+    def setUp(self):
+        install(support.make_fight())
+        decision_lib.reset_state()
+
+    def tearDown(self):
+        decision_lib.reset_state()
+
+    def _fight(self, weapon, wisdom=0, enemy_cell=(1, 0)):
+        fight = support.make_fight(
+            me=builder.entity(
+                life=100, max_life=100, tp=10, max_tp=10, mp=10, max_mp=10,
+                cell=(0, 0), wisdom=wisdom, weapons=[weapon],
+            ),
+            enemies=[builder.entity(life=100, max_life=100, cell=enemy_cell)],
+        )
+        install(fight)
+        return fight
+
+    def test_shot_log_compares_damage_not_damage_plus_lifesteal(self):
+        # Sagesse 100 : le vol de vie vaut 10 % des dégâts (1 PV ici). Le
+        # journal compare les dégâts réels aux dégâts attendus, pas à la
+        # valeur de l'option (dégâts + vol de vie).
+        fight = self._fight(support.pistol(damage=10, cost=1), wisdom=100)
+
+        decision_lib.attack(fight.me, fight.enemies[0])
+
+        shot = [line for line in fight.logs if "Shot #0" in line][0]
+        self.assertIn("expected 10.0", shot)
+        self.assertNotIn("expected 11.0", shot)
+
+    def test_refused_shot_reports_the_engine_code(self):
+        # Plafond d'utilisations atteint : le moteur refuse l'action.
+        weapon = builder.weapon(
+            "pistol", cost=1, min_range=0, max_range=1, max_uses=1,
+            features=[builder.feature(
+                Effect.DAMAGE, Effect.Target.ENEMIES, 10, 10)],
+        )
+        fight = self._fight(weapon)
+
+        decision_lib.attack(fight.me, fight.enemies[0])
+
+        self.assertTrue(any("refused (MAX_USES)" in line
+                            for line in fight.logs))
+
+    def test_weapon_requiring_line_of_sight_is_not_used_behind_an_obstacle(self):
+        weapon = builder.weapon(
+            "pistol", cost=1, min_range=0, max_range=3, needs_los=True,
+            features=[builder.feature(
+                Effect.DAMAGE, Effect.Target.ENEMIES, 10, 10)],
+        )
+        fight = self._fight(weapon, enemy_cell=(2, 0))
+        fight.field.get_cell(1, 0).obstacle = True
+
+        decision_lib.attack(fight.me, fight.enemies[0])
+
+        self.assertFalse(any("Shot #" in line for line in fight.logs))
+
+    def test_weapon_without_line_of_sight_is_used_behind_an_obstacle(self):
+        # Certaines puces / armes frappent sans ligne de vue.
+        weapon = builder.weapon(
+            "lance-flammes", cost=1, min_range=0, max_range=3, needs_los=False,
+            features=[builder.feature(
+                Effect.DAMAGE, Effect.Target.ENEMIES, 10, 10)],
+        )
+        fight = self._fight(weapon, enemy_cell=(2, 0))
+        fight.field.get_cell(1, 0).obstacle = True
+
+        decision_lib.attack(fight.me, fight.enemies[0])
+
+        self.assertTrue(any("Shot #0" in line for line in fight.logs))
+        self.assertLess(fight.enemies[0].life, 100)
+
+
 if __name__ == "__main__":
     unittest.main()

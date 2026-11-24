@@ -403,8 +403,34 @@ def log_report(me, usable, options, enemy):
     logs_lib.log("Profitability: " + (" ; ".join(lines) if lines else "none"))
 
 
+def use_code_name(code):
+    # Nom lisible d'un code de refus d'action (`Fight.Use.*`) : le moteur
+    # renvoie un code négatif quand l'action est impossible (plafond
+    # d'utilisations, PT insuffisants, ligne de vue coupée...).
+    if code >= 0:
+        return "OK"
+    use = getattr(Fight, "Use", None)
+    if use is not None:
+        for name in dir(use):
+            if name.startswith("_"):
+                continue
+            if getattr(use, name) == code:
+                return name
+    return f"code {code}"
+
+
+def drop_option(o):
+    # L'option est inutilisable pour ce tour : on neutralise ses dégâts.
+    o["parts"]["amp_raw"] = 0
+    o["parts"]["flat_sub"] = 0
+    o["parts"]["nova_raw"] = 0
+    o["parts"]["kill"] = False
+
+
 def execute(me, o, enemy, shot):
-    # Performs the chosen action. Returns True if it was a weapon attack.
+    # Performs the chosen action.
+    # Returns (was_attack, code) where `code` is the engine's return code
+    # (negative = action refused).
     #
     # La cible de la puce est explicite : l'ennemi pour une puce à dégâts,
     # le lanceur pour une puce de soin ou de buff (sans cible, la puce
@@ -414,10 +440,10 @@ def execute(me, o, enemy, shot):
             logs_lib.log(f"Switch: {o['obj']} (1 TP included in the score)")
             me.setWeapon(o["obj"])  # costs 1 TP
             o["switch"] = 0
-        me.useWeapon(enemy)
-        return True
+        code = me.useWeapon(enemy)
+        return True, code
     life_before = me.life
-    me.useChip(o["obj"], enemy if o["has_damage"] else me)
+    code = me.useChip(o["obj"], enemy if o["has_damage"] else me)
     o["used"] = True
     if o["is_heal"]:
         logs_lib.log(f"Heal: {o['obj']} (+{me.life - life_before:.1f} HP)")
@@ -429,7 +455,7 @@ def execute(me, o, enemy, shot):
         logs_lib.log(f"Buff: {o['obj']} [{details}]")
     else:
         logs_lib.log(f"Chip: {o['obj']} -> enemy {enemy.life} HP")
-    return False
+    return False, code
 
 
 def attack(me, enemy):
@@ -469,25 +495,33 @@ def attack(me, enemy):
             break
 
         life_before = enemy.life
-        was_attack = execute(me, best, enemy, shot)
+        # Attendue AVANT le tir : les dégâts attendus (force, crits,
+        # boucliers), hors vol de vie (le vol de vie est un soin, pas
+        # des dégâts : le comparer aux dégâts réels fausserait l'écart).
+        expected = analysis_lib.expected_damage(best["parts"], enemy, me)
+        was_attack, code = execute(me, best, enemy, shot)
 
         if was_attack:
             damage_dealt = life_before - enemy.life
-            if damage_dealt > 0:
+            if code < 0:
+                # Action refusée par le moteur (plafond d'utilisations, PT
+                # insuffisants, ligne de vue coupée, position invalide) :
+                # l'option est inutilisable pour ce tour.
+                logs_lib.log(f"Shot #{shot} ({best['obj']}): refused "
+                             f"({use_code_name(code)})")
+                drop_option(best)
+            elif damage_dealt > 0:
                 did_hit = True
-                gap = damage_dealt - best_value
+                gap = damage_dealt - expected
                 logs_lib.log(f"Shot #{shot} ({best['obj']}): {damage_dealt} dmg "
-                             f"(expected {best_value:.1f}, gap {gap:.1f}) "
+                             f"(expected {expected:.1f}, gap {gap:.1f}) "
                              f"-> enemy {enemy.life} HP")
             else:
-                # Abnormal case (max uses reached, cooldown...):
-                # drop this option for this turn.
-                logs_lib.log(f"Shot #{shot} ({best['obj']}): no damage, "
-                             f"option dropped")
-                best["parts"]["amp_raw"] = 0
-                best["parts"]["flat_sub"] = 0
-                best["parts"]["nova_raw"] = 0
-                best["parts"]["kill"] = False
+                # Tir sans dégât : l'action a réussi (zone qui ne couvre
+                # pas la cible, arme sans ligne de vue qui frappe dans le
+                # vide...). L'option reste valable, on ne la neutralise pas.
+                logs_lib.log(f"Shot #{shot} ({best['obj']}): 0 dmg "
+                             f"(expected {expected:.1f})")
         shot += 1
     return did_hit
 
