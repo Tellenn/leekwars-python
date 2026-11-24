@@ -43,6 +43,14 @@ class RULES:
     #: Diviseur des pourcentages (force, sagesse, science, résistance...).
     PERCENT_DIVISOR: int = 100
 
+    # --- Érosion (encyclopédie FR/Érosion, MAJ 1.98) --------------------
+    #: Part des dégâts classiques retirés à la vie maximum.
+    EROSION_DAMAGE: float = 0.05
+    #: Part des dégâts de poison retirés à la vie maximum.
+    EROSION_POISON: float = 0.10
+    #: Bonus d'érosion appliqué aux coups critiques.
+    EROSION_CRITICAL_BONUS: float = 0.10
+
     #: Distance en cases (Chebyshev). Attribut fonction pour rester modifiable.
     distance = staticmethod(_chebyshev)
 

@@ -243,6 +243,7 @@ Récapitulatif de l'API Python : **`docs/leekwars-api-python.md`**.
 | Science | amplifie les buffs `BUFF_*` (pas les `RAW_*`) | `docs/encyclopedia/effets.md` |
 | Effets | 59 types + masques de cibles (`ENEMIES=1`, `ALLIES=2`, `CASTER=4`, `NON_SUMMONS=8`, `SUMMONS=16`) | `docs/encyclopedia/effets.md` |
 | Armes : coût et plafond | `Item.cost` = PT par utilisation, `Item.maxUses` = utilisations **par tour** (compteur `Entity.itemUses()`), dégâts de base = `value1 + rand(0..value2)` | mesuré sur le moteur (combat de test #54910256 : pistol `cost=3`, `maxUses=4` → 4 tirs puis refus) |
+| Érosion | les dégâts subis réduisent la **vie maximum** : 5 % des dégâts classiques, 10 % du poison, +10 % sur un coup critique ; les boucliers atténuent l'érosion | `docs/encyclopedia/erosion.md` |
 
 ---
 
@@ -325,7 +326,7 @@ dans `scenarios/duel.json`).
 | 17 | La fuite de fin de tour (`HIDE_AFTER_ATTACK`) est désactivée par défaut : choix « DPS pur » | `Kepo_solo.py` | assumé — à réactiver si le build commence à lose des PV plus vite qu'il n'en inflige |
 | 18 | Le plafond d'utilisations d'une arme par tour (`Item.maxUses`, compteur `Entity.itemUses()`) n'est pas modélisé : l'IA tente une utilisation de trop, le moteur la refuse (0 dégât, « option dropped ») et 8 à 11 PT restent inutilisés | `libs/decision_lib.py` | à traiter (vérifié sur le moteur : `cost` = PT par tir, `maxUses` = tirs par tour — ex. pistol 3 PT / 4 tirs) |
 | 19 | Le « expected » affiché dans le journal des tirs mélange dégâts et **vol de vie** (sagesse 100 → +10 %) : le « gap » est biaisé du vol de vie | `libs/decision_lib.py` | à traiter (le modèle est juste : 54.9 dégâts attendus vs 54.4 observés sur un vrai combat) |
-| 20 | Le moteur **réduit les PV maximum** quand on perd de la vie (3000 → 2958 → 2918 → 2819 sur le combat de test) ; le mock garde `maxLife` constant | `leekwars_api/fight.py` | écart assumé (le mock n'a pas la règle « 5 % du montant retiré ») |
+| 20 | Le moteur **réduit les PV maximum** quand on perd de la vie (3000 → 2958 → 2918 → 2819 sur le combat de test) ; le mock gardait `maxLife` constant | `leekwars_api/fight.py` | **corrigé** (érosion : 5 % des dégâts subis, +10 % sur un coup critique, 10 % pour le poison — fr/Érosion) |
 | 21 | Les boucliers du mock ne **expiraient jamais** (état permanent) alors que le moteur les porte sur des effets temporaires | `leekwars_api/fight.py` | **corrigé** (`_refresh_shields()` recalcule les boucliers depuis les effets actifs à chaque tour) |
 | 22 | Les puces de bouclier étaient ignorées (« no damage, no buff, no heal ») : l'IA ne modélisait ni `RELATIVE_SHIELD` ni `ABSOLUTE_SHIELD` | `libs/analysis_lib.py`, `libs/decision_lib.py` | **corrigé** (parsing + `shield_value()` ; le bouclier n'est joué que s'il évite la mort ou achète un tour de survie) |
 

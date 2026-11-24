@@ -66,6 +66,11 @@ Propriétés en lecture/écriture : `id`, `name`, `life`, `maxLife`, `tp`,
 `teamID`, `leekID`, `entityType`.
 Méthodes : `isAlly()`, `isEnemy()`, `distance(target)`, `stat(stat)`.
 
+**Érosion** (fr/Érosion) : quand une entité subit des dégâts, une part de
+ceux-ci est retirée à sa `maxLife` (5 % des dégâts classiques, 10 % du
+poison, +10 % sur un coup critique). Les boucliers atténuent l'érosion :
+elle est calculée sur les dégâts réellement subis.
+
 `Me` ajoute : `moveToward(target, mp=None)`, `moveAwayFrom(target, mp=None)`,
 `moveTowardCells`, `moveTowardEntities`, `moveTowardLine`,
 `moveAwayFromCells`, `moveAwayFromEntities`, `moveAwayFromLine`,

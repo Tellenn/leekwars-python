@@ -33,6 +33,7 @@ DEFAULT_PAGES = [
     "Effets",
     "Vol de vie",
     "Points de Vie",
+    "Érosion",
     "Armes",
     "Puces",
 ]

@@ -150,10 +150,16 @@ class Entity:
         """Rend des PV sans dépasser les PV maximum."""
         self.life = min(self.maxLife, self.life + amount)
 
-    def take_damage(self, amount: float) -> float:
-        """Retire des PV et renvoie le montant réellement perdu."""
+    def take_damage(self, amount: float, erosion_rate: float = 0.0) -> float:
+        """Retire des PV et renvoie le montant réellement perdu.
+
+        `erosion_rate` : part des dégâts perdus retirée à la vie maximum
+        (fr/Érosion : 5 % des dégâts classiques, 10 % du poison).
+        """
         loss = min(self.life, max(0, amount))
         self.life -= loss
+        if erosion_rate > 0 and loss > 0:
+            self.maxLife = max(0, self.maxLife - loss * erosion_rate)
         return loss
 
     def add_effect(self, effect: "Effect") -> None:

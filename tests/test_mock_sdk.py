@@ -524,6 +524,45 @@ class WeaponDamageTest(MockSdkTestCase):
         self.assertEqual(enemy.maxLife, 95)
         self.assertEqual(enemy.life, 80)
 
+    def test_erosion_shrinks_max_life_by_five_percent_of_the_damage(self):
+        # fr/Érosion : 5 % des dégâts subis sont retirés à la vie maximum.
+        weapon = damage_weapon(10, cost=2, max_range=10)
+        fight = builder.make_fight(
+            me=builder.entity(strength=100, weapons=[weapon], tp=10, cell=(0, 0)),
+            enemies=[builder.entity(life=100, max_life=100, cell=(2, 0))],
+        )
+        install(fight)
+        fight.me.setWeapon(weapon)
+        enemy = fight.getNearestEnemy()
+
+        fight.me.useWeapon(enemy)
+
+        # 10 * (1 + 100/100) = 20 de dégâts -> 5 % d'érosion.
+        self.assertEqual(enemy.life, 80)
+        self.assertAlmostEqual(enemy.maxLife, 99.0)
+
+    def test_erosion_is_computed_on_the_damage_actually_taken(self):
+        # Les boucliers atténuent l'érosion (elle porte sur les dégâts subis).
+        weapon = damage_weapon(10, cost=2, max_range=10)
+        fight = builder.make_fight(
+            me=builder.entity(strength=100, weapons=[weapon], tp=10, cell=(0, 0)),
+            enemies=[
+                builder.entity(
+                    life=100, max_life=100, cell=(2, 0),
+                    relative_shield=50,
+                )
+            ],
+        )
+        install(fight)
+        fight.me.setWeapon(weapon)
+        enemy = fight.getNearestEnemy()
+
+        fight.me.useWeapon(enemy)
+
+        # 20 de dégâts, 50 % de bouclier relatif -> 10 subis -> 0,5 d'érosion.
+        self.assertEqual(enemy.life, 90)
+        self.assertAlmostEqual(enemy.maxLife, 99.5)
+
     def test_kill_ignores_shields(self):
         kill = builder.weapon(
             "fauchet",

@@ -610,7 +610,7 @@ class Fight:
             # Force : base * (1 + force / 100), puis boucliers.
             base = value * (1 + user.strength / RULES.PERCENT_DIVISOR)
             damage = self._after_shields(base, target)
-            target.take_damage(damage)
+            target.take_damage(damage, self._erosion_rate(effect_type, critical))
             # Vol de vie : uniquement les dégâts dépendant de la force.
             steal = damage * user.wisdom / RULES.LIFE_STEAL_DIVISOR
             if steal > 0:
@@ -621,7 +621,8 @@ class Fight:
         if effect_type == Effect.LIFE_DAMAGE:
             # Pourcentage des PV max du lanceur ; les boucliers s'appliquent.
             base = user.maxLife * value / RULES.PERCENT_DIVISOR
-            target.take_damage(self._after_shields(base, target))
+            target.take_damage(self._after_shields(base, target),
+                               self._erosion_rate(effect_type, critical))
             self._record_effect(user, feature, value, target, item, critical)
             return
 
@@ -734,7 +735,7 @@ class Fight:
         if effect_type in (Effect.POISON, Effect.AFTEREFFECT):
             # Amplifié par la magie, ignore les boucliers.
             amount = value * (1 + user.magic / RULES.PERCENT_DIVISOR)
-            target.take_damage(amount)
+            target.take_damage(amount, self._erosion_rate(effect_type, critical))
             self._record_effect(user, feature, value, target, item, critical)
             return
 
@@ -755,6 +756,22 @@ class Fight:
 
         # Types non modélisés : on conserve au moins la trace de l'effet.
         self._record_effect(user, feature, value, target, item, critical)
+
+    @staticmethod
+    def _erosion_rate(effect_type: int, critical: bool) -> float:
+        """Part des dégâts retirée à la vie maximum (fr/Érosion).
+
+        5 % des dégâts classiques, 10 % du poison, +10 % sur un coup
+        critique. Les boucliers atténuent l'érosion : elle est calculée
+        sur les dégâts réellement subis.
+        """
+        if effect_type == Effect.POISON:
+            rate = RULES.EROSION_POISON
+        else:
+            rate = RULES.EROSION_DAMAGE
+        if critical:
+            rate += RULES.EROSION_CRITICAL_BONUS
+        return rate
 
     @staticmethod
     def _after_shields(base: float, target: Entity) -> float:
