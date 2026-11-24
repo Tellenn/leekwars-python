@@ -176,7 +176,7 @@ Le rapport de combat est lu après coup : il ne doit pas être noyé.
 | identité | **une fois par combat** | nom de l'IA, force/agilité/sagesse/science, multiplicateur de dégâts, inventaire (effets parsés), équipement ignoré |
 | état | chaque tour | PV de l'ennemi, boucliers, PV manquants |
 | rentabilité | chaque tour | une ligne : `objet valeur/PT=score` par option encore jouable — pour une arme, la **valeur du tour** (tirs possibles × dégâts) et les PT **réellement dépensés** (équipement + tirs, plafonnés par `maxUses`) ; pour un buff, le gain estimé sur sa **durée** |
-| actions | chaque action | une ligne : tir (dégâts réels **vs dégâts attendus hors vol de vie**), refus du moteur nommé (`refused (MAX_USES)`), soin, buff (avec la force avant/après), bouclier, changement d'arme |
+| actions | chaque action | une ligne : tir (dégâts réels **vs dégâts attendus hors vol de vie**), refus du moteur nommé (`refused (MAX_USES)`), soin, buff (avec la force avant/après), bouclier, changement d'arme | ⚠️ la distance d'un tir qui **tue** la cible est journalisée après sa mort (sa case a changé) : elle ne reflète plus la portée |
 | positionnement | chaque repositionnement | portée ennemie + zone de menace, distance visée, distance obtenue (`Kiting:` / `Position:`) |
 
 Mécanique : `libs/logs_lib.log_once(clé, message)` n'écrit qu'une fois par
@@ -328,7 +328,7 @@ Récapitulatif de l'API Python : **`docs/leekwars-api-python.md`**.
 | Érosion | les dégâts subis réduisent la **vie maximum** : 5 % des dégâts classiques, 10 % du poison, +10 % sur un coup critique ; les boucliers atténuent l'érosion | `docs/encyclopedia/erosion.md` |
 | Ligne de vue | `Item.needsLos` : la plupart des armes l'exigent, 11 puces du catalogue frappent sans (trébuchet, étincelle, repiquage, picquant…) | `docs/leekwars-api-python.md` + données du jeu (`weapon/get-all`, `chip/get-all`) |
 | Contrainte de visée | `Item.launchType` : `LINE` = 1 (« ne peut tirer qu'en ligne » → la cible doit être sur la même **ligne ou colonne** que le tireur), `DIAGONAL` = 2 (cible en diagonale), `CIRCLE` = 7 (aucune contrainte) | fr/Armes (« la machine gun ne peut tirer qu'en ligne », « la bazooka ne marche qu'en diagonale ») + mesuré sur le moteur (combat #54913377 : une cible en diagonale exacte fait refuser le tir d'une arme LINE) |
-| Distance | le moteur compte la portée avec `Cell.distance()` : **|dx| + |dy|** (une diagonale de 2 cases vaut 4) — c'est la métrique à utiliser pour toute comparaison de portée | mesuré sur le moteur (combat de test #54912618 : le fusil, portée 7, est accepté à distance 7 ; la puce, portée 5, est refusée ; combat #54913368 : deux cases décalées de (19, -6) sont à 25 cases) — le **mock est aligné** sur cette métrique (cf. §8, #27) |
+| Distance | le moteur compte la portée avec `Cell.distance()` : **|dx| + |dy|** (une diagonale de 2 cases vaut 4) — c'est la métrique à utiliser pour toute comparaison de portée | mesuré sur le moteur : #54913368 (deux cases décalées de (19, -6) sont à 25 cases) ; #54913442 (tir refusé en (7, -2) — manhattan 9, chebyshev 7 — malgré une vue dégagée ; tirs acceptés en (5, 0) et (-3, -4), manhattan ≤ 7) — le **mock est aligné** sur cette métrique (cf. §8, #27) |
 
 ---
 
