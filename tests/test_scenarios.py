@@ -124,6 +124,38 @@ class TurnScenarioTest(unittest.TestCase):
         # La fuite consomme des PM (l'IA s'est déplacée pour casser la vue).
         self.assertLess(fight.me.mp, 10)
 
+    def test_ai_uses_a_damage_chip_against_the_enemy(self):
+        # une puce à dégâts doit viser l'ennemi (sinon elle vise la case du
+        # lanceur et ne touche personne)
+        damage_chip = builder.chip(
+            "fireBall",
+            cost=1,
+            min_range=0,
+            max_range=3,
+            features=[builder.feature(
+                Effect.DAMAGE,
+                Effect.Target.ENEMIES,
+                12, 12,
+            )],
+        )
+        fight = support.make_fight(
+            me=builder.entity(
+                life=100, max_life=100, tp=10, max_tp=10, mp=10, max_mp=10,
+                cell=(0, 0),
+                weapons=[support.pistol(damage=1, cost=3)],
+                chips=[damage_chip],
+            ),
+            enemies=[builder.entity(life=100, max_life=100, cell=(1, 0))],
+        )
+        main = support.load_main(fight)
+
+        main.turn()
+
+        # la puce (12 dégâts pour 1 PT) est plus rentable que l'arme
+        # (1 dégât pour 3 PT) -> elle est utilisée sur l'ennemi
+        self.assertLessEqual(fight.enemies[0].life, 88)
+        self.assertTrue(any("Casting chip" in line for line in fight.logs))
+
     def test_turn_without_enemy_is_a_no_op(self):
         fight = support.make_fight(
             me=builder.entity(

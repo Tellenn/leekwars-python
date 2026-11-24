@@ -183,6 +183,10 @@ def log_report(me, usable, options, enemy):
 
 def execute(me, o, enemy, shot):
     # Performs the chosen action. Returns True if it was a weapon attack.
+    #
+    # La cible de la puce est explicite : l'ennemi pour une puce à dégâts,
+    # le lanceur pour une puce de soin ou de buff (sans cible, la puce
+    # viserait la case du lanceur et ne toucherait personne).
     if o["kind"] == "weapon":
         if o["switch"] > 0:
             logs_lib.log(f"Switching weapon to {o['obj']} "
@@ -193,7 +197,7 @@ def execute(me, o, enemy, shot):
                      f"{enemy.life})")
         me.useWeapon(enemy)
         return True
-    me.useChip(o["obj"])
+    me.useChip(o["obj"], enemy if o["has_damage"] else me)
     o["used"] = True
     if o["is_heal"]:
         logs_lib.log(f"Casting heal chip {o['obj']} (value "

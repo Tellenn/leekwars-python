@@ -270,8 +270,9 @@ dans `scenarios/duel.json`).
 | 10 | `main.py` appelait `turn()` à la fin du module : le moteur rejoue déjà `turn()` chaque tour → tir en double au tour 1 | `main.py` | **corrigé** (appel retiré) — **à confirmer au premier import sur le site** |
 | 11 | `main.py` n'est pas un nom imposé par la plateforme (le moteur exécute le fichier `aiPath` de l'IA) : c'est une convention de ce dépôt | `main.py` | documenté |
 | 12 | `EFFECT_KILL` valait 0 dégât dans le modèle : l'IA ne choisissait jamais une arme d'exécution | `libs/analysis_lib.py` | **corrigé** (`kill` → la valeur vaut les PV restants de la cible) |
-| 13 | Les actions dont le code de retour est négatif (`INVALID_POSITION`, `NOT_ENOUGH_TP`…) ne sont pas distinguées : l'IA suppose que l'action a réussi | `libs/decision_lib.py` | à traiter (l'option est déjà neutralisée après 0 dégât) |
+| 13 | Les actions dont le code de retour est négatif (`INVALID_POSITION`, `NOT_ENOUGH_TP`…) ne sont pas distinguées : l'IA suppose que l'action a réussi | `libs/decision_lib.py` | à traiter (l'option est déjà neutralisée après 0 dégât ; le mock expose désormais les codes officiels) |
 | 14 | Le mock n'applique pas le « 5 % du montant retiré » sur les PV maximum (règle du jeu sur les dégâts) | `leekwars_api/fight.py` | écart assumé (sans impact sur les décisions) |
+| 15 | `useChip(chip)` sans cible : une puce à dégâts visait la case du lanceur et ne touchait jamais l'ennemi | `libs/decision_lib.py` | **corrigé** (cible explicite : l'ennemi pour une puce à dégâts, le lanceur sinon) |
 
 ---
 
