@@ -1,88 +1,99 @@
 # @version:3.12
 #
-# SONDE DE DIAGNOSTIC : elle ne joue pas, elle *mesure*.
+# IA "Kepo solo" - point d'entrée (entry point).
 #
-# Objectif : déterminer la MÉTRIQUE de portée du moteur (chebyshev ?
-# manhattan ? euclidienne ?).
+# PROFIL DE JEU : DPS BRUT. Le build de Kepo est centré sur la FORCE
+# (dégâts) ; la protection viendra plus tard (résistance / sagesse).
+# Conséquences sur le code :
+#   - le score de décision est dominé par les dégâts attendus
+#     (force + crits - boucliers ennemi) ;
+#   - le soin n'est choisi que si son ratio PV/PT bat le ratio dégâts/PT ;
+#   - les buffs de force sont valorisés (ils multiplient tous les tirs
+#     suivants du tour).
 #
-# `Cell.distance()` vaut |dx| + |dy| (mesuré au combat #54913368), mais
-# le moteur a accepté un tir de pistolet (portée 7) à une distance de 9
-# (combat #54913431) : le contrôle de portée du moteur utilise donc une
-# autre métrique.
+# Structure follows the encyclopedia fr/Python advice: with turn(), the file
+# body is evaluated once (imports, persistent state), then turn() is run by
+# the engine at every turn.
 #
-# Pour trancher sans confondre avec la ligne de vue, la sonde se place en
-# DIAGONALE de l'ennemi (dx = dy ≈ 4-6) et ne tire que si :
-#   - toutes les cases du rectangle entre les deux sont libres
-#     (donc AUCUNE ligne de vue possible n'est coupée) ;
-#   - `Cell.lineOfSight()` confirme la vue.
-# Alors, pour une portée de 7 :
-#   - chebyshev = 5   -> accepté si le moteur compte les cases ;
-#   - euclidien = 7,07 -> refusé si le moteur compte la distance réelle ;
-#   - manhattan = 10  -> refusé si le moteur compte |dx| + |dy|.
+# DO NOT call turn() at the end of this file: the engine already replays it
+# at each turn, an explicit call would fire an extra turn at body-evaluation
+# time (see AGENTS.md §8, gap #10).
 #
-# La sonde ne sert qu'à la mesure : elle est copiée temporairement à la
-# place de `Kepo_solo.py`, poussée, puis le journal du combat de test est
-# lu (même principe que tools/probe_launch.py).
+# All libraries live in the "libs" folder of the Leek Wars drive:
+#   libs/constants_lib.py, libs/logs_lib.py, libs/analysis_lib.py,
+#   libs/decision_lib.py, libs/equipment_lib.py
 #
-# Aucun import : la sonde n'utilise que les globaux du moteur.
+# IMPORT NOTE: the editor's type stubs don't declare the "libs" package, so
+# Pyright flags the import as unresolved and members as unknown. Runtime is
+# unaffected; "# type: ignore" silences these false positives. A local copy of
+# the official stubs is available in stubs/__builtins__.pyi for local
+# checking.
+#
+# Decision flow per turn:
+#   0. equip a weapon if none held (best damage/TP ratio)
+#   1. find nearest enemy
+#   2. loop: pick the best value/TP option among attacks, buffs and HEALS,
+#      execute it (a heal wins exactly when its heal/TP ratio beats the
+#      best damage/TP ratio, as specified; heal is wisdom-amplified and
+#      clamped to missing HP)
+#   3. if nothing was in range, reposition (1v1: stay out of the enemy's
+#      reach, even after their movement, to keep the initiative) and rerun
+#   4. optionally break line of sight (see HIDE_AFTER_ATTACK)
 
+import libs.logs_lib as logs_lib  # type: ignore
+import libs.equipment_lib as equipment_lib  # type: ignore
+import libs.decision_lib as decision_lib  # type: ignore
 
-def _pick_pistol(me):
-    """L'arme « circle » de plus grande portée (aucune contrainte de visée)."""
-    best = None
-    for weapon in me.weapons:
-        if getattr(weapon, "launchType", 7) != 7:
-            continue
-        if best is None or weapon.maxRange > best.maxRange:
-            best = weapon
-    return best
+# Comportement de fin de tour.
+#   False : DPS pur (défaut) — on reste à portée et on garde le tempo
+#           offensif. C'est le choix de Kepo : build centré sur la force,
+#           la protection viendra plus tard.
+#   True  : comportement "shoot and hide" — on tire puis on fuit (casse la
+#           ligne de vue). Utile si le build perd des PV plus vite qu'il
+#           n'en inflige.
+HIDE_AFTER_ATTACK = True
 
+me = Fight.me
 
-def _rectangle_is_clear(me, enemy):
-    """Aucune case du rectangle entre les deux entités n'est un obstacle."""
-    obstacles = Field.getObstacles()
-    x0, x1 = me.cell.x, enemy.cell.x
-    y0, y1 = me.cell.y, enemy.cell.y
-    if x0 > x1:
-        x0, x1 = x1, x0
-    if y0 > y1:
-        y0, y1 = y1, y0
-    for cell in obstacles:
-        if x0 <= cell.x <= x1 and y0 <= cell.y <= y1:
-            return False
-    return True
+logs_lib.log("Booting up Kepo_solo.py !")
 
 
 def turn():
-    me = Fight.me
     enemy = Fight.getNearestEnemy()
-    if enemy is None:
-        Debug.log("probe: no enemy")
+
+    if enemy == None:
+        logs_lib.log("No enemy detected")
         return
 
-    pistol = _pick_pistol(me)
-    if pistol is None:
-        Debug.log("probe: no circle weapon")
-        return
-    if me.weapon is not pistol:
-        me.setWeapon(pistol)
+    # Mesure des dégâts reçus pendant le tour de l'ennemi (utilisés pour
+    # décider si l'on pose un bouclier).
+    decision_lib.begin_turn(me)
 
-    # On vise une case en diagonale de l'ennemi (4 à 6 cases).
-    index = Fight.turn
-    step = 5 + (index % 3)  # 5..7
-    sign = 1 if (index // 3) % 2 == 0 else -1
-    cell = Field.cellFromXY(enemy.cell.x + step * sign,
-                             enemy.cell.y + step * sign)
-    if cell is not None:
-        me.moveToward(cell, me.mp)
+    # Step 0: have a weapon in hand from the start
+    equipment_lib.equip_starting_weapon(me, enemy)
 
-    dx = enemy.cell.x - me.cell.x
-    dy = enemy.cell.y - me.cell.y
-    clear = _rectangle_is_clear(me, enemy)
-    los = me.cell.lineOfSight(enemy.cell)
-    code = me.useWeapon(enemy)
-    Debug.log(f"probe: code={code} dx={dx} dy={dy} "
-              f"cheb={max(abs(dx), abs(dy))} man={abs(dx) + abs(dy)} "
-              f"d2={dx * dx + dy * dy} range={pistol.maxRange} "
-              f"r2={pistol.maxRange * pistol.maxRange} "
-              f"los={los} clear={clear}")
+    did_hit = decision_lib.attack(me, enemy)
+
+    # If nothing was in range, reposition ourselves: in 1v1 we stay out of
+    # the enemy's reach (even after their movement) so that we keep the
+    # initiative and hit them on the next turn. Otherwise we just close in.
+    if not did_hit and me.mp > 0:
+        decision_lib.approach(me, enemy)
+        did_hit = decision_lib.attack(me, enemy)
+
+    # On n'a toujours pas pu tirer : nos PT sont inutilisés. On lance un
+    # buff "un tour avant" si c'est plus rentable que d'attendre
+    # l'ouverture du tour suivant (le tour suivant sera amplifié).
+    if not did_hit:
+        decision_lib.prep_buff(me, enemy)
+
+    # Enfin, on peut tenter de casser la ligne de vue — mais seulement si
+    # on a réellement tiré : se cacher sans avoir rien fait garantit
+    # qu'on ne pourra plus tirer du tout (le décor nous sépare de la
+    # cible, et le plan de placement ne nous rapprochera pas).
+    if HIDE_AFTER_ATTACK and did_hit:
+        decision_lib.hide(me, enemy)
+
+    # Mémorise nos PV : la différence avec le tour suivant mesurera les
+    # dégâts de l'ennemi.
+    decision_lib.end_turn(me)
