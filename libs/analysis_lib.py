@@ -231,6 +231,19 @@ def missing_life(entity):
     return entity.maxLife - entity.life
 
 
+def remaining_uses(item, me):
+    # Utilisations encore possibles de l'objet ce tour.
+    #
+    # `Item.maxUses` est le nombre d'utilisations autorisées **par tour**
+    # (le moteur refuse la suivante avec le code MAX_USES) et
+    # `Entity.itemUses(item)` le compteur d'utilisations déjà faites.
+    # None = pas de plafond.
+    max_uses = getattr(item, "maxUses", 0)
+    if max_uses <= 0:
+        return None
+    return max(0, max_uses - me.itemUses(item))
+
+
 def in_range(obj, me, target):
     # Portée de l'objet, et ligne de vue *seulement si l'objet l'exige* :
     # certaines puces (trébuchet, étincelle, repiquage...) frappent sans

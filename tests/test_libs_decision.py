@@ -7,6 +7,7 @@ import support
 from leekwars_api import builder, install
 
 import libs.decision_lib as decision_lib
+import libs.equipment_lib as equipment_lib
 
 
 class BuildOptionsTest(unittest.TestCase):
@@ -89,16 +90,43 @@ class OptionScoreTest(unittest.TestCase):
         self.me = self.fight.me
         self.enemy = self.fight.enemies[0]
 
-    def test_attack_score_is_expected_damage_per_tp(self):
+    def test_attack_score_is_the_turn_value_over_the_tp_spent(self):
         usable, options = decision_lib.build_options(self.me)
         weapon = [o for o in options if o["kind"] == "weapon"][0]
 
         score, value = decision_lib.option_score(self.me, weapon, usable,
                                                  self.enemy)
 
-        # 10 dégâts / (1 PT d'usage + 1 PT d'équipement) = 5
-        self.assertEqual(value, 10)
-        self.assertEqual(score, 5)
+        # 10 PT, arme à 1 PT (10 dégâts par tir) : 9 tirs possibles
+        # (9 PT) + 1 PT d'équipement. Valeur du tour = 90 dégâts,
+        # score = 90 / 10 PT.
+        self.assertEqual(value, 90)
+        self.assertEqual(score, 9)
+
+    def test_attack_score_stops_at_the_uses_limit(self):
+        # Plafond `maxUses` : l'arme ne peut pas tirer plus de 2 fois.
+        weapon = builder.weapon(
+            "pistol",
+            cost=1,
+            min_range=0,
+            max_range=1,
+            max_uses=2,
+            features=[
+                builder.feature(
+                    Effect.DAMAGE, Effect.Target.ENEMIES, 10, 10,
+                )
+            ],
+        )
+        self.me.weapons = [weapon]
+        usable, options = decision_lib.build_options(self.me)
+        option = [o for o in options if o["obj"] is weapon][0]
+
+        score, value = decision_lib.option_score(self.me, option, usable,
+                                                 self.enemy)
+
+        # 2 tirs (plafond) : 20 dégâts pour 1 + 2 PT.
+        self.assertEqual(value, 20)
+        self.assertEqual(score, 20 / 3)
 
     def test_heal_score_is_clamped_to_missing_life(self):
         usable, options = decision_lib.build_options(self.me)
@@ -333,8 +361,9 @@ class ShotLogTest(unittest.TestCase):
         self.assertIn("expected 10.0", shot)
         self.assertNotIn("expected 11.0", shot)
 
-    def test_refused_shot_reports_the_engine_code(self):
-        # Plafond d'utilisations atteint : le moteur refuse l'action.
+    def test_ai_does_not_attempt_a_shot_over_the_uses_limit(self):
+        # Plafond d'utilisations atteint : l'IA ne tente plus le tir que
+        # le moteur refuserait.
         weapon = builder.weapon(
             "pistol", cost=1, min_range=0, max_range=1, max_uses=1,
             features=[builder.feature(
@@ -344,8 +373,14 @@ class ShotLogTest(unittest.TestCase):
 
         decision_lib.attack(fight.me, fight.enemies[0])
 
-        self.assertTrue(any("refused (MAX_USES)" in line
-                            for line in fight.logs))
+        self.assertFalse(any("refused" in line for line in fight.logs))
+        self.assertEqual(len([line for line in fight.logs
+                              if "Shot #" in line]), 1)
+
+    def test_use_code_name_names_the_engine_codes(self):
+        self.assertEqual(decision_lib.use_code_name(-7), "MAX_USES")
+        self.assertEqual(decision_lib.use_code_name(-4), "INVALID_POSITION")
+        self.assertEqual(decision_lib.use_code_name(1), "OK")
 
     def test_weapon_requiring_line_of_sight_is_not_used_behind_an_obstacle(self):
         weapon = builder.weapon(
@@ -374,6 +409,39 @@ class ShotLogTest(unittest.TestCase):
 
         self.assertTrue(any("Shot #0" in line for line in fight.logs))
         self.assertLess(fight.enemies[0].life, 100)
+
+
+class EquipmentChoiceTest(unittest.TestCase):
+    """Choix de l'arme de départ : le plafond d'utilisations compte."""
+
+    def test_weapon_choice_accounts_for_the_uses_limit(self):
+        # Arme A : 1 PT, 1 tir par tour, 10 dégâts -> ratio par tir = 10.
+        # Arme B : 9 PT, 2 tirs par tour, 55 dégâts -> ratio par tir = 6.1.
+        # Au ratio par tir, A gagne ; une fois le plafond d'utilisations et
+        # les PT réellement dépensés pris en compte, B livre plus de dégâts
+        # par PT (5.8 contre 5.0).
+        fast_but_capped = builder.weapon(
+            "cannon", cost=1, min_range=0, max_range=3, max_uses=1,
+            features=[builder.feature(
+                Effect.DAMAGE, Effect.Target.ENEMIES, 10, 10)],
+        )
+        slow_but_repeatable = builder.weapon(
+            "lance", cost=9, min_range=0, max_range=3, max_uses=2,
+            features=[builder.feature(
+                Effect.DAMAGE, Effect.Target.ENEMIES, 55, 55)],
+        )
+        fight = support.make_fight(
+            me=builder.entity(
+                life=100, max_life=100, tp=20, max_tp=20, mp=10, max_mp=10,
+                cell=(0, 0), weapons=[fast_but_capped, slow_but_repeatable],
+            ),
+            enemies=[builder.entity(life=200, max_life=200, cell=(1, 0))],
+        )
+        install(fight)
+
+        equipment_lib.equip_starting_weapon(fight.me, fight.enemies[0])
+
+        self.assertIs(fight.me.weapon, slow_but_repeatable)
 
 
 if __name__ == "__main__":

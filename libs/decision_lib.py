@@ -71,6 +71,45 @@ def reset_state():
     _INCOMING = 0.0
 
 
+def weapon_uses(me, o, budget=None):
+    # Nombre de tirs possibles de cette arme sur le tour : budget de PT et
+    # plafond `maxUses` (le moteur refuse la (maxUses + 1)-e utilisation).
+    if budget is None:
+        budget = me.tp - o["switch"]
+    cost = o["cost"]
+    if cost <= 0:
+        return 0
+    uses = budget // cost
+    left = analysis_lib.remaining_uses(o["obj"], me)
+    if left is not None and left < uses:
+        uses = left
+    return max(0, uses)
+
+
+def attack_value(me, o, enemy):
+    # Valeur d'une attaque sur le tour : (dégâts + vol de vie) par tir ×
+    # nombre de tirs réellement possibles. Renvoie (valeur, score, tirs).
+    uses = weapon_uses(me, o)
+    if uses <= 0:
+        return 0.0, 0.0, 0
+    per_shot = (analysis_lib.expected_damage(o["parts"], enemy, me)
+                + analysis_lib.expected_lifesteal(o["parts"], enemy, me))
+    value = per_shot * uses
+    spent = o["switch"] + o["cost"] * uses
+    score = value / spent if spent > 0 else 0.0
+    return value, score, uses
+
+
+def option_spent(me, o):
+    # TP réellement dépensés par l'option sur le tour : pour une arme,
+    # l'équipement + tous les tirs que le plafond `maxUses` et les PT
+    # permettent ; pour une puce, son coût (elle est jouée une fois).
+    if o["kind"] == "weapon":
+        uses = weapon_uses(me, o)
+        return o["switch"] + o["cost"] * uses
+    return o["cost"] + o["switch"]
+
+
 def build_options(me):
     # One option = dict with "kind", "obj", "cost", "switch" (+1 TP to equip
     # a weapon not held, 0 for a chip), parsed "parts" and flags:
@@ -118,16 +157,13 @@ def best_attack_now(me, usable, enemy):
     for o in usable:
         if not o["has_damage"]:
             continue
-        total_cost = o["cost"] + o["switch"]
-        if total_cost <= 0 or me.tp < total_cost:
-            continue
         if o["kind"] == "chip" and o["used"]:
             continue
         if not analysis_lib.in_range(o["obj"], me, enemy):
             continue
-        exp = analysis_lib.expected_damage(o["parts"], enemy, me)
-        if exp / total_cost > best_score:
-            best_score = exp / total_cost
+        value, score, uses = attack_value(me, o, enemy)
+        if score > best_score:
+            best_score = score
             best = o
     return best
 
@@ -150,7 +186,9 @@ def buff_value(me, o, reference_attack, enemy):
     budget = me.tp - o["cost"] - reference_attack["switch"]
     if budget < 0 or reference_attack["cost"] <= 0:
         return 0
-    shots = int(budget / reference_attack["cost"])
+    shots = weapon_uses(me, reference_attack, budget=budget)
+    if shots <= 0:
+        return 0
 
     value = 0
     if o["parts"]["buff_strength"] > 0:
@@ -285,6 +323,12 @@ def strength_buff_gain(me, buff_option, reference, enemy):
         return 0
     shots_without = int(me.tp / attack_cost)
     shots_with = int((me.tp - buff_option["cost"]) / attack_cost)
+    # Plafond d'utilisations par tour : on ne peut pas tirer plus que
+    # `maxUses` fois, même si les PT permettraient plus de tirs.
+    cap = analysis_lib.remaining_uses(reference["obj"], me)
+    if cap is not None:
+        shots_without = min(shots_without, cap)
+        shots_with = min(shots_with, cap)
     if shots_with <= 0:
         return 0  # le buff supprimerait tous les tirs
     damage = analysis_lib.expected_damage(reference["parts"], enemy, me)
@@ -336,9 +380,10 @@ def option_score(me, o, usable, enemy):
         if not analysis_lib.in_range(o["obj"], me, enemy):
             return 0, 0
         # Dégâts attendus + vol de vie (les dégâts dépendant de la force
-        # soignent aussi le lanceur : fr/Sagesse).
-        value = (analysis_lib.expected_damage(o["parts"], enemy, me)
-                 + analysis_lib.expected_lifesteal(o["parts"], enemy, me))
+        # soignent aussi le lanceur : fr/Sagesse), multipliés par le
+        # nombre de tirs réellement possibles (plafond maxUses + PT).
+        value, score, uses = attack_value(me, o, enemy)
+        return score, value
     return value / total_cost, value
 
 
@@ -390,16 +435,16 @@ def log_report(me, usable, options, enemy):
 
     lines = []
     for o in usable:
-        total_cost = o["cost"] + o["switch"]
-        if total_cost <= 0:
+        spent = option_spent(me, o)
+        if spent <= 0:
             continue
         if o["kind"] == "chip" and o["used"]:
             continue  # puce déjà jouée ce tour : plus une option
         score, value = option_score(me, o, usable, enemy)
         if value >= MANDATORY:
-            lines.append(f"{o['obj']} (sauve la mort)/{total_cost}TP=inf")
+            lines.append(f"{o['obj']} (sauve la mort)/{spent}TP=inf")
         else:
-            lines.append(f"{o['obj']} {value:.1f}/{total_cost}TP={score:.1f}")
+            lines.append(f"{o['obj']} {value:.1f}/{spent}TP={score:.1f}")
     logs_lib.log("Profitability: " + (" ; ".join(lines) if lines else "none"))
 
 

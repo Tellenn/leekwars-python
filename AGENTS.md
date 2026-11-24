@@ -81,6 +81,10 @@ Conséquences sur le code :
 
 - le score de décision est dominé par les **dégâts attendus** (force + crits
   − boucliers ennemi) ;
+- la **valeur d'une attaque** est celle du *tour* : (dégâts + vol de vie) par
+  tir × **nombre de tirs réellement possibles** (`weapon_uses()` : le plafond
+  `maxUses` du moteur et les PT disponibles), et son score est cette valeur
+  rapportée aux PT **réellement dépensés** (équipement + tirs) ;
 - un **soin** n'est choisi que si son ratio `PV/PT` bat le ratio
   `dégâts/PT` de la meilleure attaque (le soin n'est pas une priorité) ;
 - le **buff de force part AVANT les tirs** (`strength_buff_plan()`) : il
@@ -124,7 +128,7 @@ Le rapport de combat est lu après coup : il ne doit pas être noyé.
 |---|---|---|
 | identité | **une fois par combat** | nom de l'IA, force/agilité/sagesse/science, multiplicateur de dégâts, inventaire (effets parsés), équipement ignoré |
 | état | chaque tour | PV de l'ennemi, boucliers, PV manquants |
-| rentabilité | chaque tour | une ligne : `objet valeur/PT=score` par option encore jouable |
+| rentabilité | chaque tour | une ligne : `objet valeur/PT=score` par option encore jouable — pour une arme, la **valeur du tour** (tirs possibles × dégâts) et les PT **réellement dépensés** (équipement + tirs, plafonnés par `maxUses`) |
 | actions | chaque action | une ligne : tir (dégâts réels **vs dégâts attendus hors vol de vie**), refus du moteur nommé (`refused (MAX_USES)`), soin, buff, bouclier, changement d'arme |
 
 Mécanique : `libs/logs_lib.log_once(clé, message)` n'écrit qu'une fois par
@@ -325,7 +329,7 @@ dans `scenarios/duel.json`).
 | 15 | `useChip(chip)` sans cible : une puce à dégâts visait la case du lanceur et ne touchait jamais l'ennemi | `libs/decision_lib.py` | **corrigé** (cible explicite : l'ennemi pour une puce à dégâts, le lanceur sinon) |
 | 16 | Sur un build **force**, le buff de force devrait être lancé **avant** les tirs (il multiplie tous les tirs suivants) ; le scoring actuel le traite comme une option concurrente des attaques, sur un horizon d'un seul tour | `libs/decision_lib.py` | **corrigé** (`strength_buff_plan()` : le buff de force ouvre le tour s'il améliore le total de dégâts du tour) |
 | 17 | La fuite de fin de tour (`HIDE_AFTER_ATTACK`) est désactivée par défaut : choix « DPS pur » | `Kepo_solo.py` | assumé — à réactiver si le build commence à lose des PV plus vite qu'il n'en inflige |
-| 18 | Le plafond d'utilisations d'une arme par tour (`Item.maxUses`, compteur `Entity.itemUses()`) n'est pas modélisé : l'IA tente une utilisation de trop, le moteur la refuse (0 dégât, « option dropped ») et 8 à 11 PT restent inutilisés | `libs/decision_lib.py` | à traiter (vérifié sur le moteur : `cost` = PT par tir, `maxUses` = tirs par tour — ex. pistol 3 PT / 4 tirs) |
+| 18 | Le plafond d'utilisations d'une arme par tour (`Item.maxUses`, compteur `Entity.itemUses()`) n'était pas modélisé : l'IA tentait une utilisation de trop (refusée par le moteur), laissait 8 à 11 TP inutilisés, surévaluait l'horizon du buff de force et classait mal les armes lentes | `libs/decision_lib.py`, `libs/equipment_lib.py` | **corrigé** (`weapon_uses()` : tirs possibles = `min(maxUses − itemUses, floor(TP/coût))` ; le score, l'horizon du buff et le choix de l'arme de départ l'utilisent) |
 | 19 | Le « expected » affiché dans le journal des tirs mélange dégâts et **vol de vie** (sagesse 100 → +10 %) : le « gap » est biaisé du vol de vie | `libs/decision_lib.py` | **corrigé** (la ligne de tir compare les dégâts attendus hors vol de vie ; la ligne de rentabilité garde la valeur « dégâts + vol de vie ») |
 | 20 | Le moteur **réduit les PV maximum** quand on perd de la vie (3000 → 2958 → 2918 → 2819 sur le combat de test) ; le mock gardait `maxLife` constant | `leekwars_api/fight.py` | **corrigé** (érosion : 5 % des dégâts subis, +10 % sur un coup critique, 10 % pour le poison — fr/Érosion) |
 | 21 | Les boucliers du mock ne **expiraient jamais** (état permanent) alors que le moteur les porte sur des effets temporaires | `leekwars_api/fight.py` | **corrigé** (`_refresh_shields()` recalcule les boucliers depuis les effets actifs à chaque tour) |
