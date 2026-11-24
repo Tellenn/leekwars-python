@@ -290,6 +290,72 @@ class ExpectedDamageTest(unittest.TestCase):
             analysis_lib.expected_damage(parts, target, attacker), 2.0
         )
 
+    def test_the_parsed_effects_keep_one_hit_per_damage_effect(self):
+        # La machine gun fait 3 coups par utilisation : le bouclier
+        # absolu de la cible est retiré à chaque coup.
+        weapon = builder.weapon(
+            "machine_gun",
+            cost=4,
+            features=[
+                builder.feature(
+                    Effect.DAMAGE, Effect.Target.ENEMIES, 10, 10,
+                )
+                for _ in range(3)
+            ],
+        )
+        parts = analysis_lib.analyse_equipment(builder.entity(), weapon)
+
+        self.assertEqual(parts["damage_hits"], [10, 10, 10])
+        self.assertEqual(parts["amp_raw"], 30)
+
+    def test_the_absolute_shield_is_removed_on_every_hit(self):
+        # fr/Résistance : le bouclier absolu est retiré à chaque coup.
+        # Mesuré sur le moteur (combat #54914966) : la machine gun contre
+        # une cible avec 17 de bouclier absolu ne fait que ~46 de dégâts
+        # au lieu de 80.
+        weapon = builder.weapon(
+            "machine_gun",
+            cost=4,
+            features=[
+                builder.feature(
+                    Effect.DAMAGE, Effect.Target.ENEMIES, 10, 10,
+                )
+                for _ in range(3)
+            ],
+        )
+        attacker = builder.entity(strength=100)
+        parts = analysis_lib.analyse_equipment(attacker, weapon)
+        target = builder.entity(life=100, max_life=100, absolute_shield=15)
+
+        # 3 coups de 10 (x2 avec la force) - 15 de bouclier = 5 par coup
+        self.assertAlmostEqual(
+            analysis_lib.expected_damage(parts, target, attacker), 15.0
+        )
+
+    def test_each_hit_is_clamped_to_zero_on_its_own(self):
+        # Un coup plus faible que le bouclier absolu ne fait aucun
+        # dégât, mais les autres coups passent.
+        weapon = builder.weapon(
+            "double",
+            cost=2,
+            features=[
+                builder.feature(
+                    Effect.DAMAGE, Effect.Target.ENEMIES, 30, 30,
+                ),
+                builder.feature(
+                    Effect.DAMAGE, Effect.Target.ENEMIES, 10, 10,
+                ),
+            ],
+        )
+        attacker = builder.entity()
+        parts = analysis_lib.analyse_equipment(attacker, weapon)
+        target = builder.entity(life=100, max_life=100, absolute_shield=20)
+
+        # 30 - 20 = 10, et 10 - 20 = 0 (pas -10 !) -> 10
+        self.assertAlmostEqual(
+            analysis_lib.expected_damage(parts, target, attacker), 10.0
+        )
+
     def test_damage_never_goes_below_zero(self):
         parts = {"amp_raw": 10, "flat_sub": 0, "nova_raw": 0, "kill": False}
         attacker = builder.entity()

@@ -82,6 +82,7 @@ def analyse_equipment(entity, obj):
     # passer une puce de soin pour une attaque : l'IA ignorait alors le
     # bandage ("Ignored (no damage, no buff, no heal, no shield)").
     amp_raw = 0       # force-amplified damage raw sum
+    damage_hits = []  # un coup par effet de dégâts (la machine gun : 3)
     flat_sub = 0      # shielded flat damage (already converted to an amount)
     nova_raw = 0      # nova damage raw sum (science-amplified, no shields)
     kill = False      # instant kill effect
@@ -108,6 +109,7 @@ def analyse_equipment(entity, obj):
 
         if f.type in FORCE_AMPLIFIED and hits_enemies:
             amp_raw += avg
+            damage_hits.append(avg)
             details.append(f"{DAMAGE_NAMES[f.type]}: {f.minValue}-"
                            f"{f.maxValue}")
         elif f.type in SHIELDED_FLAT and hits_enemies:
@@ -173,8 +175,8 @@ def analyse_equipment(entity, obj):
                 buff_turns = f.turns
 
     return {
-        "amp_raw": amp_raw, "flat_sub": flat_sub, "nova_raw": nova_raw,
-        "kill": kill,
+        "amp_raw": amp_raw, "damage_hits": damage_hits,
+        "flat_sub": flat_sub, "nova_raw": nova_raw, "kill": kill,
         "heal_raw": heal_raw, "heal_flat": heal_flat,
         "buff_strength": buff_strength, "buff_power": buff_power,
         "buff_tp": buff_tp, "buff_mp": buff_mp, "buff_turns": buff_turns,
@@ -189,6 +191,34 @@ def shields(target):
     # Target's current shields (confirmed in game: relativeShield /
     # absoluteShield).
     return target.relativeShield, target.absoluteShield
+
+
+def damage_hits(o):
+    # Les coups de l'objet : un par effet de dégâts (la machine gun fait
+    # 3 coups par utilisation).
+    #
+    # Le bouclier absolu est retiré à CHAQUE coup (fr/Résistance) : il
+    # faut donc les connaître un par un. Repli sur l'ancienne structure
+    # (un seul coup).
+    hits = o.get("damage_hits")
+    if hits is None:
+        return [o["amp_raw"]] if o["amp_raw"] > 0 else []
+    return hits
+
+
+def hit_damage(hits, target, multiplier):
+    # Dégâts de chaque coup, après les boucliers de la cible.
+    #
+    # fr/Résistance : "Final = Base * (1 - BouclierRelatif/100) -
+    # BouclierAbsolu" s'applique à CHAQUE coup : le bouclier absolu est
+    # donc retiré autant de fois qu'il y a de coups (une machine gun
+    # contre une cible avec 15 de bouclier absolu perd 45, pas 15).
+    rel, absolu = shields(target)
+    out = []
+    for value in hits:
+        damage = value * multiplier * (1 - rel / 100) - absolu
+        out.append(damage if damage > 0 else 0.0)
+    return out
 
 
 def shielded_damage(base, target):
@@ -212,12 +242,15 @@ def raw_damage(o, target, attacker=None):
     # turn benefits immediately to the following shots.
     if attacker == None:
         attacker = Fight.me
-    body = shielded_damage(
-        o["amp_raw"] * force_crit_multiplier(attacker) + o["flat_sub"],
-        target)
+    multiplier = force_crit_multiplier(attacker)
+    # Un coup par effet de dégâts : le bouclier absolu de la cible est
+    # retiré à chaque coup.
+    total = sum(hit_damage(damage_hits(o), target, multiplier))
+    # Dégâts plats (% de la vie du lanceur) : une seule application.
+    if o["flat_sub"] > 0:
+        total += shielded_damage(o["flat_sub"], target)
     # Nova damage: amplified by science and ignores shields (fr/Résistance).
-    nova = o["nova_raw"] * (1 + attacker.science / 100)
-    total = body + nova
+    total += o["nova_raw"] * (1 + attacker.science / 100)
     if o["kill"]:
         # Instant execution: every remaining life point falls.
         total = target.life
@@ -248,9 +281,9 @@ def expected_lifesteal(o, target, attacker=None):
     # Only force-dependent damage gives lifesteal.
     if attacker == None:
         attacker = Fight.me
-    body = shielded_damage(
-        o["amp_raw"] * force_crit_multiplier(attacker), target)
-    return body * attacker.wisdom / 1000
+    multiplier = force_crit_multiplier(attacker)
+    dealt = sum(hit_damage(damage_hits(o), target, multiplier))
+    return dealt * attacker.wisdom / 1000
 
 
 def missing_life(entity):

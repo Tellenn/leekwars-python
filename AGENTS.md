@@ -344,7 +344,7 @@ Récapitulatif de l'API Python : **`docs/leekwars-api-python.md`**.
 |---|---|---|
 | Force | `DegatsFinaux = Base * (1 + Force / 100)` | `docs/encyclopedia/force.md` |
 | Coup critique | `P = Agilité / 1000`, multiplicateur `1.3` | `docs/encyclopedia/agilite.md` |
-| Boucliers | `Final = Base * (1 - BouclierRelatif/100) - BouclierAbsolu` (plancher 0) | `docs/encyclopedia/resistance.md` |
+| Boucliers | `Final = Base * (1 - BouclierRelatif/100) - BouclierAbsolu` (plancher 0) — **appliqué à chaque coup** : le bouclier absolu est retiré autant de fois que l'arme fait de coups | `docs/encyclopedia/resistance.md` |
 | Ignorent les boucliers | poisons, renvoi de dégâts, dégâts nova | `docs/encyclopedia/resistance.md` |
 | Sagesse | `SoinsFinaux = Base * (1 + Sagesse / 100)` (plafonné aux PV max) | `docs/encyclopedia/sagesse.md` |
 | Vol de vie | `SoinsParVolDeVie = DegatsFinaux * Sagesse / 1000` | `docs/encyclopedia/vol_de_vie.md` |
@@ -470,6 +470,7 @@ dans `scenarios/duel.json`).
 | 46 | L'armure n'était posée qu'**après** avoir encaissé le coup de l'ennemi : on ne pouvait pas s'armer avant le premier contact, quand l'ennemi approche hors de notre portée | `libs/decision_lib.py`, `Kepo_solo.py` | **corrigé** — `prep_shield()` : armure « un tour avant » (comme `prep_buff()` pour les buffs) : si on ne peut pas tirer et que l'ennemi est dans sa zone de menace, on pose le bouclier pour encaisser son prochain coup protégé ; l'armure d'ouverture ne joue ce rôle que si l'on peut tirer |
 | 47 | Le rapport de combat ne montrait **pas notre propre bouclier** : impossible de vérifier après coup si un coup encaissé était protégé (ni de mesurer l'effet de l'armure) | `libs/decision_lib.py` | **corrigé** — la ligne d'état affiche `me X/Y HP (missing Z, shield R/A)` |
 | 48 | Le **soin** était choisi sur son rapport `PV/PT` : un soin bon marché (27 PV pour 2 PT) pouvait voler la place d'un tir à 45 PV, alors que faire 30 de dégâts vaut mieux que 25 de soin | `libs/decision_lib.py` | **corrigé** — le soin n'est proposé que si on ne peut pas faire autant de dégâts que le soin vaut (comparaison sur les **valeurs**, plus sur les rapports) ; exception : le soin qui **sauve notre mort** passe avant tout (`MANDATORY`) |
+| 49 | Le **bouclier absolu de la cible** était retiré **une fois par tir** au lieu d'**une fois par coup** : contre une cible avec 17 de bouclier, la machine gun (3 coups) était surestimée de 73 % (80 de dégâts au lieu de 46) — mesuré sur le moteur (combat #54914966 : 39 et 63 dégâts réels pour 80 attendus) | `libs/analysis_lib.py` | **corrigé** — `analyse_equipment()` garde un coup par effet de dégâts (`damage_hits`) et `hit_damage()` applique le bouclier à chaque coup (fr/Résistance) |
 
 ---
 
