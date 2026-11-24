@@ -54,6 +54,8 @@ HIDE_AFTER_ATTACK = False
 
 me = Fight.me
 
+logs_lib.log("Booting up Kepo_solo.py !")
+
 
 def turn():
     enemy = Fight.getNearestEnemy()
