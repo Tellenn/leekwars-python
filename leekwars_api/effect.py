@@ -226,4 +226,29 @@ def type_name(value: int) -> str:
     return f"TYPE_{value}"
 
 
-__all__ = ["Effect", "Type", "Target", "Modifier", "type_name"]
+#: Effets qui s'appliquent au lanceur (soin, buff, bouclier) : ils le
+#: touchent même si la case visée est vide. Un effet offensif ne touche
+#: JAMAIS le lanceur : sur le site, le tir du joueur ne le blesse pas (le
+#: masque "31" des armes du catalogue contient le bit CASTER, mais la zone
+#: d'effet ne contient que la case visée).
+_SELF_EFFECT_NAMES = (
+    "HEAL", "RAW_HEAL", "BOOST_MAX_LIFE", "NOVA_VITALITY",
+    "BUFF_STRENGTH", "BUFF_AGILITY", "BUFF_RESISTANCE", "BUFF_WISDOM",
+    "BUFF_TP", "BUFF_MP",
+    "RAW_BUFF_STRENGTH", "RAW_BUFF_AGILITY", "RAW_BUFF_RESISTANCE",
+    "RAW_BUFF_WISDOM", "RAW_BUFF_MAGIC", "RAW_BUFF_SCIENCE",
+    "RAW_BUFF_POWER", "RAW_BUFF_TP", "RAW_BUFF_MP",
+    "RELATIVE_SHIELD", "ABSOLUTE_SHIELD",
+    "RAW_RELATIVE_SHIELD", "RAW_ABSOLUTE_SHIELD",
+)
+
+_SELF_EFFECTS = {_TYPE_VALUES[name] for name in _SELF_EFFECT_NAMES}
+
+
+def is_self_effect(effect_type: int) -> bool:
+    """L'effet s'applique-t-il au lanceur (soin, buff, bouclier) ?"""
+    return effect_type in _SELF_EFFECTS
+
+
+__all__ = ["Effect", "Type", "Target", "Modifier", "type_name",
+           "is_self_effect"]

@@ -79,8 +79,13 @@ def chip(
     inline: bool = False,
     failure: int = 0,
     id: Optional[int] = None,
+    cooldown: int = 0,
 ) -> Chip:
-    """Construit une puce (enregistrée dans le catalogue global)."""
+    """Construit une puce (enregistrée dans le catalogue global).
+
+    `cooldown` : nombre de tours pendant lesquels la puce ne peut plus être
+    jouée après une utilisation (cf. `Chip.currentCooldown`).
+    """
     return Chip(
         id=id,
         name=name,
@@ -92,6 +97,7 @@ def chip(
         needs_los=needs_los,
         inline=inline,
         failure=failure,
+        cooldown=cooldown,
     )
 
 

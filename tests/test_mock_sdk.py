@@ -340,7 +340,10 @@ class BuilderSignatureTest(MockSdkTestCase):
             ("id", None),
         ]
         self.assertEqual(self._parameters(builder.weapon), expected)
-        self.assertEqual(self._parameters(builder.chip), expected)
+        # La puce a en plus son cooldown (tours pendant lesquels elle ne
+        # peut plus être jouée).
+        self.assertEqual(self._parameters(builder.chip), expected +
+                         [("cooldown", 0)])
 
     def test_feature_signature(self):
         self.assertEqual(
@@ -652,6 +655,140 @@ class HealAndBuffTest(MockSdkTestCase):
 
         fight.me.useChip(raw)
         self.assertEqual(fight.me.strength, 30)  # RAW : +10 seulement
+
+
+class GameMasksTest(MockSdkTestCase):
+    """Les masques de cibles réels du catalogue (api/chip/get-all).
+
+    Les armes et les puces du jeu utilisent le masque 31
+    (ENNEMIS|ALLIES|CASTER|...) : il contient le bit CASTER, mais un effet
+    offensif ne touche jamais le lanceur.
+    """
+
+    def test_the_caster_is_not_hit_by_its_own_damage(self):
+        weapon = builder.weapon(
+            "pistol",
+            cost=3,
+            min_range=1,
+            max_range=7,
+            features=[builder.feature(Effect.DAMAGE, 31, 15, 20)],
+        )
+        fight = builder.make_fight(
+            me=builder.entity(life=175, max_life=175, strength=110,
+                              weapons=[weapon], cell=(0, 0)),
+            enemies=[builder.entity(life=172, max_life=172, cell=(3, 0))],
+        )
+        install(fight)
+        fight.me.setWeapon(weapon)
+
+        fight.me.useWeapon(fight.enemies[0])
+
+        # l'ennemi est touché, pas le tireur
+        self.assertLess(fight.enemies[0].life, 172)
+        self.assertEqual(fight.me.life, 175)
+
+    def test_a_heal_chip_without_target_heals_the_caster(self):
+        heal = builder.chip(
+            "bandage",
+            cost=2,
+            features=[builder.feature(Effect.HEAL, 31, 25, 25)],
+        )
+        fight = builder.make_fight(
+            me=builder.entity(life=50, max_life=100, chips=[heal], cell=(0, 0)),
+            enemies=[builder.entity(life=100, max_life=100, cell=(1, 0))],
+        )
+        install(fight)
+
+        fight.me.useChip(heal)
+
+        self.assertEqual(fight.me.life, 75)   # 50 + 25
+        self.assertEqual(fight.enemies[0].life, 100)  # l'ennemi n'est pas soigné
+
+
+class ChipCooldownTest(MockSdkTestCase):
+    """Cooldown des puces : `Fight.Use.INVALID_COOLDOWN`."""
+
+    def _chip(self, cooldown=3):
+        return builder.chip(
+            "protein",
+            cost=3,
+            cooldown=cooldown,
+            features=[
+                builder.feature(
+                    Effect.RAW_BUFF_STRENGTH,
+                    Effect.Target.CASTER | Effect.Target.ALLIES,
+                    80, 80, turns=2,
+                )
+            ],
+        )
+
+    def test_a_chip_on_cooldown_is_refused(self):
+        chip = self._chip()
+        fight = builder.make_fight(
+            me=builder.entity(strength=110, chips=[chip], cell=(0, 0)),
+            enemies=[builder.entity(cell=(5, 0))],
+        )
+        install(fight)
+
+        self.assertEqual(fight.me.useChip(chip), FightClass.Use.SUCCESS)
+        self.assertEqual(fight.me.strength, 190)  # 110 + 80
+
+        # la puce est désormais en cooldown : le moteur la refuse
+        self.assertEqual(chip.currentCooldown, 3)
+        self.assertEqual(fight.me.useChip(chip),
+                         FightClass.Use.INVALID_COOLDOWN)
+        self.assertEqual(fight.me.strength, 190)  # rien n'a été rejoué
+
+    def test_the_cooldown_decreases_at_each_turn(self):
+        chip = self._chip()
+        fight = builder.make_fight(
+            me=builder.entity(strength=110, chips=[chip], cell=(0, 0)),
+            enemies=[builder.entity(cell=(5, 0))],
+        )
+        install(fight)
+
+        fight.me.useChip(chip)
+        self.assertEqual(chip.currentCooldown, 3)
+
+        fight.next_turn()
+        self.assertEqual(chip.currentCooldown, 2)
+        fight.next_turn()
+        self.assertEqual(chip.currentCooldown, 1)
+        fight.next_turn()
+        self.assertEqual(chip.currentCooldown, 0)
+        # la puce est de nouveau jouable
+        self.assertEqual(fight.me.useChip(chip), FightClass.Use.SUCCESS)
+
+
+class BuffDurationTest(MockSdkTestCase):
+    """Un buff de stat expire avec son effet (la stat revient à sa base)."""
+
+    def test_the_stat_comes_back_when_the_buff_expires(self):
+        chip = builder.chip(
+            "protein",
+            cost=3,
+            features=[
+                builder.feature(
+                    Effect.RAW_BUFF_STRENGTH,
+                    Effect.Target.CASTER | Effect.Target.ALLIES,
+                    80, 80, turns=2,
+                )
+            ],
+        )
+        fight = builder.make_fight(
+            me=builder.entity(strength=110, chips=[chip], cell=(0, 0)),
+            enemies=[builder.entity(cell=(5, 0))],
+        )
+        install(fight)
+
+        fight.me.useChip(chip)
+        self.assertEqual(fight.me.strength, 190)  # 110 + 80
+
+        fight.next_turn()  # le buff est encore actif (2 tours)
+        self.assertEqual(fight.me.strength, 190)
+
+        fight.next_turn()  # le buff a expiré
+        self.assertEqual(fight.me.strength, 110)
 
 
 class UsageRulesTest(MockSdkTestCase):

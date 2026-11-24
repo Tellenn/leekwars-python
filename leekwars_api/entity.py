@@ -11,6 +11,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any, Iterable, List, Optional
 
 from .cell import Cell, as_cell
+from .effect import is_self_effect
 from .items import Chip, Feature, Item, Weapon
 from .rules import RULES
 
@@ -94,6 +95,16 @@ class Entity:
         self.science = science
         self.magic = magic
         self.power = power
+        #: Stats de base (sans buff) : un buff temporaire est recalculé à
+        #: chaque tour, et la stat revient à sa valeur de base à son
+        #: expiration (comme sur le site).
+        self._base_stats = {
+            "strength": strength, "agility": agility, "wisdom": wisdom,
+            "resistance": resistance, "science": science, "magic": magic,
+            "power": power,
+        }
+        #: Buffs sans durée (effet instantané) : ils ne sont pas expirables.
+        self._instant_buffs: dict = {}
         self.level = level
         self.cell: Optional[Cell] = cell
         self.weapon: Optional[Weapon] = None
@@ -446,7 +457,11 @@ class Me(Entity):
         if not isinstance(item, Chip):
             return fight.Use.INVALID_TARGET
         if target is None:
-            if any(f.targets & fight.Effect.Target.ENEMIES for f in item.features):
+            # Une puce de soin ou de buff se vise elle-même : le masque
+            # "31" du catalogue contient le bit ENEMIES, mais un soin ne
+            # doit jamais viser l'ennemi.
+            offensive = any(not is_self_effect(f.type) for f in item.features)
+            if offensive:
                 target = fight.getNearestEnemy()
             else:
                 target = self

@@ -11,7 +11,7 @@ import random
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 from .cell import Cell, as_cell
-from .effect import Effect
+from .effect import Effect, is_self_effect
 from .entity import Entity, Me
 from .field import Field
 from .items import Chip, Feature, Item, Weapon
@@ -92,6 +92,28 @@ _SCIENCE_AMPLIFIED = {
     Effect.BUFF_WISDOM,
     Effect.BUFF_TP,
     Effect.BUFF_MP,
+}
+
+#: Effets de buff qui modifient une stat du poireau (le buff est
+#: rejoué à chaque tour à partir des effets actifs).
+_BUFF_STATS = {
+    Effect.BUFF_STRENGTH: "strength",
+    Effect.BUFF_AGILITY: "agility",
+    Effect.BUFF_RESISTANCE: "resistance",
+    Effect.BUFF_WISDOM: "wisdom",
+    Effect.RAW_BUFF_STRENGTH: "strength",
+    Effect.RAW_BUFF_AGILITY: "agility",
+    Effect.RAW_BUFF_RESISTANCE: "resistance",
+    Effect.RAW_BUFF_WISDOM: "wisdom",
+    Effect.RAW_BUFF_MAGIC: "magic",
+    Effect.RAW_BUFF_SCIENCE: "science",
+    Effect.RAW_BUFF_POWER: "power",
+}
+
+#: Entraves : elles retirent de la stat (amplifiées par la magie).
+_STAT_PENALTIES = {
+    Effect.SHACKLE_STRENGTH: "strength",
+    Effect.RAW_SHACKLE_STRENGTH: "strength",
 }
 
 
@@ -458,6 +480,12 @@ class Fight:
             # Les boucliers sont portés par des effets temporaires : ils
             # expirent avec eux (fr/Résistance).
             self._refresh_shields(entity)
+            # Idem pour les buffs de stat : un buff expiré rend la stat.
+            self._refresh_stats(entity)
+        # Les cooldowns de puces baissent d'un tour.
+        for chip in Chip.getAll():
+            if chip.currentCooldown > 0:
+                chip.currentCooldown -= 1
         self._item_uses.clear()
         return self.turn
 
@@ -489,6 +517,41 @@ class Fight:
         entity.relativeShield = relative
         entity.absoluteShield = absolute
 
+    @staticmethod
+    def _refresh_stats(entity) -> None:
+        """Recalcule les stats buffées depuis les effets actifs.
+
+        Un buff (puce "Protéines" : +force pendant 2 tours) ne dure que
+        le temps de son effet : à son expiration, la stat revient à sa
+        valeur de base. Sur le site, `Entity.strength` renvoie la valeur
+        buffée ; le mock doit donc faire de même.
+        """
+        base = getattr(entity, "_base_stats", None)
+        if base is None:
+            return
+        values = dict(base)
+        # Buffs instantanés (sans durée) : ils ne sont pas expirables.
+        for name, amount in getattr(entity, "_instant_buffs", {}).items():
+            values[name] = values.get(name, 0) + amount
+        for effect in entity.effects:
+            caster = effect.caster
+            if effect.type in _BUFF_STATS:
+                amount = effect.value
+                if effect.type in _SCIENCE_AMPLIFIED:
+                    science = getattr(caster, "science", 0) if caster else 0
+                    amount *= 1 + science / RULES.PERCENT_DIVISOR
+                name = _BUFF_STATS[effect.type]
+                values[name] = values.get(name, 0) + amount
+            elif effect.type in _STAT_PENALTIES:
+                amount = effect.value
+                if effect.type == Effect.SHACKLE_STRENGTH:
+                    magic = getattr(caster, "magic", 0) if caster else 0
+                    amount *= 1 + magic / RULES.PERCENT_DIVISOR
+                name = _STAT_PENALTIES[effect.type]
+                values[name] = max(0, values.get(name, 0) - amount)
+        for name, value in values.items():
+            setattr(entity, name, value)
+
     def item_uses(self, user: Entity, item) -> int:
         """Nombre d'utilisations d'un item par une entité ce tour."""
         if isinstance(item, int):
@@ -515,6 +578,10 @@ class Fight:
             return _Use.NOT_ENOUGH_TP
         if item.maxUses > 0 and self.item_uses(user, item) >= item.maxUses:
             return _Use.MAX_USES
+        if isinstance(item, Chip) and item.cooldown > 0 \
+                and item.currentCooldown > 0:
+            # Puce en cooldown : le moteur la refuse.
+            return _Use.INVALID_COOLDOWN
         # Hors portée ou ligne de vue coupée : position invalide (code -4).
         distance = RULES.distance(user.cell, target_cell)
         if distance < item.minRange or distance > item.maxRange:
@@ -538,14 +605,24 @@ class Fight:
         user.tp -= item.cost
         key = (user.id, item.id)
         self._item_uses[key] = self._item_uses.get(key, 0) + 1
+        if isinstance(item, Chip) and item.cooldown > 0:
+            # La puce part en cooldown : elle ne peut plus être jouée
+            # pendant `cooldown` tours.
+            item.currentCooldown = item.cooldown
 
         critical = self.rng.random() < user.agility / RULES.CRITICAL_DIVISOR
+        touched = []
         for feature in item.features:
             value = self._roll(feature)
             if critical:
                 value *= RULES.CRITICAL_FACTOR
             for target in self._feature_targets(user, feature, item, target_cell):
                 self._apply_feature(user, feature, value, target, item, critical)
+                if target not in touched:
+                    touched.append(target)
+        # Les stats buffées sont recalculées depuis les effets actifs.
+        for target in touched:
+            self._refresh_stats(target)
         return _Use.CRITICAL if critical else _Use.SUCCESS
 
     def _roll(self, feature: Feature) -> int:
@@ -576,8 +653,11 @@ class Fight:
         # Les effets sur le lanceur s'appliquent même si la case visée est vide
         # (ex. buff de force du Glaive : on peut taper dans le vide).
         # `ALWAYS_CASTER` (32) force aussi la cible sur le lanceur.
+        # En revanche un effet OFFENSIF ne touche jamais le lanceur : sur le
+        # site, le tir du joueur ne le blesse pas.
         caster_bits = Effect.Target.CASTER | Effect.Target.ALWAYS_CASTER
-        if mask & caster_bits and id(user) not in seen:
+        if (is_self_effect(feature.type) and mask & caster_bits
+                and id(user) not in seen):
             result.append(user)
         return result
 
@@ -663,24 +743,17 @@ class Fight:
             return
 
         # Buffs simples : science pour les BUFF_*, aucune pour les RAW_*.
-        buffs = {
-            Effect.BUFF_STRENGTH: "strength",
-            Effect.BUFF_AGILITY: "agility",
-            Effect.BUFF_RESISTANCE: "resistance",
-            Effect.BUFF_WISDOM: "wisdom",
-            Effect.RAW_BUFF_STRENGTH: "strength",
-            Effect.RAW_BUFF_AGILITY: "agility",
-            Effect.RAW_BUFF_RESISTANCE: "resistance",
-            Effect.RAW_BUFF_WISDOM: "wisdom",
-            Effect.RAW_BUFF_MAGIC: "magic",
-            Effect.RAW_BUFF_SCIENCE: "science",
-            Effect.RAW_BUFF_POWER: "power",
-        }
-        if effect_type in buffs:
+        if effect_type in _BUFF_STATS:
             amount = value
             if effect_type in _SCIENCE_AMPLIFIED:
                 amount *= 1 + user.science / RULES.PERCENT_DIVISOR
-            setattr(target, buffs[effect_type], getattr(target, buffs[effect_type]) + amount)
+            name = _BUFF_STATS[effect_type]
+            setattr(target, name, getattr(target, name) + amount)
+            if feature.turns <= 0:
+                # Buff instantané (sans durée) : il n'est pas enregistré
+                # comme effet, il ne peut donc pas expirer.
+                target._instant_buffs[name] = \
+                    target._instant_buffs.get(name, 0) + amount
             self._record_effect(user, feature, value, target, item, critical)
             return
 
