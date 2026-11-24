@@ -69,7 +69,7 @@ def turn():
 
     # On vise une case en diagonale de l'ennemi (4 à 6 cases).
     index = Fight.turn
-    step = 4 + (index % 3)  # 4..6
+    step = 5 + (index % 3)  # 5..7
     sign = 1 if (index // 3) % 2 == 0 else -1
     cell = Field.cellFromXY(enemy.cell.x + step * sign,
                              enemy.cell.y + step * sign)
