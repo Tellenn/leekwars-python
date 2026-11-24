@@ -50,7 +50,7 @@ import libs.decision_lib as decision_lib  # type: ignore
 #   True  : comportement "shoot and hide" — on tire puis on fuit (casse la
 #           ligne de vue). Utile si le build perd des PV plus vite qu'il
 #           n'en inflige.
-HIDE_AFTER_ATTACK = False
+HIDE_AFTER_ATTACK = True
 
 me = Fight.me
 
