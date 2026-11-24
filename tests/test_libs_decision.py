@@ -397,18 +397,48 @@ class HelmetChipTest(unittest.TestCase):
         self.assertTrue(any("Shield:" in line for line in fight.logs))
         self.assertEqual(me.absoluteShield, 15)
 
-    def test_the_helmet_chip_is_not_played_when_it_saves_nothing(self):
-        # 23 PV restants, l'ennemi frappe 77 : le bouclier de 15 ne change
-        # rien (on meurt au même tour), l'IA garde le tempo offensif.
+    def test_the_helmet_chip_is_not_played_when_it_protects_nothing(self):
+        # L'ennemi frappe 2 PV par tour : le Casque (15 de bouclier) ne
+        # protège que de 2 PV par coup, sa protection vaut moins qu'un
+        # tir : l'IA garde le tempo offensif.
         fight = self._fight(chip=support.helmet_chip())
         me = fight.me
         enemy = fight.enemies[0]
-        self._turn_after(fight, 77)
+        self._turn_after(fight, 2)
 
         decision_lib.attack(me, enemy)
 
         self.assertFalse(any("Shield:" in line for line in fight.logs))
         self.assertEqual(me.absoluteShield, 0)
+
+    def test_the_helmet_chip_blocks_15_points_on_every_hit(self):
+        # Le bouclier ABSOLU retire 15 PV à *chaque coup* (fr/Résistance) :
+        # l'ennemi qui frappe 4 fois par tour nous fait perdre 4 x 15.
+        weapon = builder.weapon(
+            "pistol",
+            cost=1,
+            min_range=1,
+            max_range=6,
+            max_uses=4,
+            features=[
+                builder.feature(
+                    builder.Effect.DAMAGE,
+                    builder.Effect.Target.ENEMIES,
+                    20, 20,
+                )
+            ],
+        )
+        fight = self._fight(chip=support.helmet_chip())
+        fight.enemies[0].weapon = weapon
+        me = fight.me
+        enemy = fight.enemies[0]
+        self._turn_after(fight, 80)  # 4 coups de 20
+
+        decision_lib.attack(me, enemy)
+
+        blocked = next(line for line in fight.logs if "Opening shield:" in line)
+        self.assertIn("~60 dmg blocked per turn over 4 hit(s)", blocked)
+        self.assertIn("~120 dmg prevented over 2 turn(s)", blocked)
 
     def test_the_helmet_chip_goes_on_cooldown_once_played(self):
         fight = self._fight(chip=support.helmet_chip())
@@ -429,9 +459,9 @@ class OpeningShieldTest(unittest.TestCase):
     """L'armure est jouée en ouverture de tour, avant les tirs.
 
     Le bouclier n'est pas un « ratio » : c'est de la survie. Kepo est un
-    build force (aucune protection) : le bouclier est posé dès qu'il
-    achète un tour de survie, même si son rapport valeur/PT est moins bon
-    que celui d'un tir.
+    build force (aucune protection) : l'armure est posée dès que sa
+    protection vaut au moins un tir, et le bouclier ABSOLU est valorisé
+    *par coup* (15 PV × le nombre de coups encaissés).
     """
 
     def setUp(self):
@@ -533,11 +563,13 @@ class OpeningShieldTest(unittest.TestCase):
         self.assertTrue(any("(sauve la mort)" in line
                             for line in fight.logs))
 
-    def test_the_opening_shield_is_not_played_when_it_saves_nothing(self):
+    def test_the_opening_shield_is_not_played_when_it_protects_nothing(self):
+        # L'ennemi frappe 2 PV par tour : la protection du Casque (2 PV par
+        # coup) ne vaut pas un tir, on ne s'arme pas.
         fight = self._fight(chip=support.helmet_chip())
         me = fight.me
         enemy = fight.enemies[0]
-        self._turn_after(fight, 77)  # 23 PV restants, coup de 77
+        self._turn_after(fight, 2)
 
         decision_lib.attack(me, enemy)
 

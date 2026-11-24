@@ -55,6 +55,52 @@ class ThreatModelTest(unittest.TestCase):
         install(fight)
         return fight
 
+    def test_hits_per_turn_counts_the_uses_and_the_projectiles(self):
+        # Le bouclier ABSOLU bloque un montant par coup : il faut savoir
+        # combien de coups l'ennemi nous inflige.
+        fight = self._fight(
+            me=builder.entity(cell=(0, 0), weapons=[support.rifle(range_=3)]),
+            enemies=[
+                builder.entity(cell=(5, 0), weapon=support.pistol(range_=1))
+            ],
+        )
+        enemy = fight.enemies[0]
+        # Le pistolet de test : 1 effet de dégâts, pas de plafond d'usages
+        # -> un coup par tour.
+        self.assertEqual(threat_lib.hits_per_turn(enemy), 1)
+
+    def test_hits_per_turn_multiplies_max_uses_and_projectiles(self):
+        machine_gun = builder.weapon(
+            "machine_gun",
+            cost=4,
+            min_range=1,
+            max_range=6,
+            max_uses=3,
+            features=[
+                builder.feature(
+                    builder.Effect.DAMAGE,
+                    builder.Effect.Target.ENEMIES,
+                    10, 15,
+                )
+                for _ in range(3)
+            ],
+        )
+        fight = self._fight(
+            me=builder.entity(cell=(0, 0), weapons=[support.rifle(range_=3)]),
+            enemies=[
+                builder.entity(cell=(5, 0), weapon=machine_gun)
+            ],
+        )
+        # 3 usages par tour × 3 projectiles = 9 coups.
+        self.assertEqual(threat_lib.hits_per_turn(fight.enemies[0]), 9)
+
+    def test_hits_per_turn_without_weapon_is_one(self):
+        fight = self._fight(
+            me=builder.entity(cell=(0, 0), weapons=[support.rifle(range_=3)]),
+            enemies=[builder.entity(cell=(5, 0))],
+        )
+        self.assertEqual(threat_lib.hits_per_turn(fight.enemies[0]), 1)
+
     def test_enemy_threat_adds_their_movement_to_their_weapon_range(self):
         fight = self._fight(
             me=builder.entity(cell=(0, 0), weapons=[support.rifle(range_=3)]),

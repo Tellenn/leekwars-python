@@ -30,9 +30,11 @@
 # absolute package imports (libs.xxx).
 
 import libs.analysis_lib as analysis_lib  # type: ignore
+import libs.constants_lib as constants_lib  # type: ignore
 
 # Pyright fix: re-read the module as "Any" (see IMPORT NOTE in Kepo_solo.py)
 analysis_lib = globals()["analysis_lib"]
+constants_lib = globals()["constants_lib"]
 
 #: Contraintes de visée (`Item.launchType`) : reprises de
 #: `libs/constants_lib.py` (le module est relu comme "Any", on évite donc
@@ -75,6 +77,34 @@ def offensive_items(entity):
         if is_offensive(parts):
             items.append(chip)
     return items
+
+
+def hits_per_turn(entity):
+    """Nombre de coups que l'entité peut nous infliger par tour.
+
+    Une arme peut servir plusieurs fois par tour (`Item.maxUses`) et chaque
+    usage peut contenir plusieurs effets de dégâts (la machine gun : 3
+    projectiles par tir) : le nombre de coups est le produit des deux.
+
+    C'est ce nombre qui rend le **bouclier absolu** model'sable : il bloque
+    un montant fixe *par coup* (fr/Résistance), pas par tour.
+
+    Sans arme connue (ou sans plafond d'usages), on suppose un coup par
+    tour : c'est l'hypothèse prudente (on sous-estime la protection).
+    """
+    weapon = getattr(entity, "weapon", None)
+    if weapon is None:
+        return 1
+    uses = analysis_lib.max_uses(weapon)
+    if uses is None:
+        uses = 1  # pas de plafond : on ne compte qu'un usage
+    shots = 0
+    for feature in getattr(weapon, "features", []):
+        if feature.type in constants_lib.FORCE_AMPLIFIED:
+            shots += 1
+    if shots <= 0:
+        shots = 1
+    return max(1, uses * shots)
 
 
 def enemy_threat(enemy):
