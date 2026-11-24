@@ -7,12 +7,17 @@
 # `Cell.distance()` vaut |dx| + |dy| (mesuré au combat #54913368), mais
 # le moteur a accepté un tir de pistolet (portée 7) à une distance de 9
 # (combat #54913431) : le contrôle de portée du moteur utilise donc une
-# autre métrique. On tire à chaque tour et on journalise (dx, dy) et le
-# code du moteur : les refus tracent la frontière.
+# autre métrique.
+#
+# Pour trancher, la sonde se place en DIAGONALE de l'ennemi (dx = dy ≈ 5) :
+#   - chebyshev = 5  -> accepté si le moteur compte les cases ;
+#   - manhattan = 10 -> refusé si le moteur compte |dx| + |dy| ;
+#   - euclidien = 7,07 -> refusé si le moteur compte la distance réelle.
+# Elle journalise (dx, dy) et le code du moteur à chaque tir.
 #
 # La sonde ne sert qu'à la mesure : elle est copiée temporairement à la
 # place de `Kepo_solo.py`, poussée, puis le journal du combat de test est
-# lu (voir tools/probe_launch.py pour le même principe).
+# lu (même principe que tools/probe_launch.py).
 #
 # Aucun import : la sonde n'utilise que les globaux du moteur.
 
@@ -42,15 +47,15 @@ def turn():
     if me.weapon is not pistol:
         me.setWeapon(pistol)
 
-    # Pour isoler la métrique de portée, il faut des tirs dont la ligne
-    # de vue est dégagée : si la vue est coupée, on se rapproche (cela la
-    # rétablit), sinon on s'éloigne pour échantillonner des distances
-    # croissantes (la frontière de portée).
+    # Diagonale de 5 cases : on alterne le sens pour trouver une vue
+    # dégagée.
     index = Fight.turn
-    if me.cell.lineOfSight(enemy.cell):
-        me.moveAwayFrom(enemy, me.mp)
-    else:
-        me.moveToward(enemy, me.mp)
+    step = 4 + (index % 3)  # 4..6
+    sign = 1 if (index // 3) % 2 == 0 else -1
+    cell = Field.cellFromXY(enemy.cell.x + step * sign,
+                             enemy.cell.y + step * sign)
+    if cell is not None:
+        me.moveToward(cell, me.mp)
 
     code = me.useWeapon(enemy)
     dx = enemy.cell.x - me.cell.x
