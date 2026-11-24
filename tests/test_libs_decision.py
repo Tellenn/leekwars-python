@@ -624,6 +624,20 @@ class OpeningShieldTest(unittest.TestCase):
         self.assertFalse(any("Opening shield:" in line
                              for line in fight.logs))
 
+    def test_the_state_line_shows_our_own_shield(self):
+        # Sans ça, impossible de vérifier dans le rapport de combat si un
+        # coup encaissé était protégé.
+        fight = self._fight(chip=support.helmet_chip())
+        me = fight.me
+        enemy = fight.enemies[0]
+        self._turn_after(fight, 50)
+
+        decision_lib.attack(me, enemy)
+
+        state = next(line for line in fight.logs if "Enemy" in line
+                     and "HP" in line)
+        self.assertIn("shield 0/15", state)
+
 
 class PrepShieldTest(unittest.TestCase):
     """L'armure « un tour avant » : on s'arme avant le premier coup ennemi.

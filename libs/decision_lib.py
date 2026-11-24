@@ -461,10 +461,15 @@ def shield_plan(me, usable, enemy):
         if o["cost"] > me.tp:
             continue
         value = shield_value(me, o, usable, enemy)
-        if value <= 0 and _INCOMING <= 0 and threat_lib.in_reach(enemy, me):
+        if value <= 0 and _INCOMING <= 0 \
+                and threat_lib.in_reach(enemy, me) \
+                and best_attack_now(me, usable, enemy) != None:
             # On ne connaît pas encore les dégâts de l'ennemi (premier
-            # tour du combat) mais il va nous frapper : on s'arme quand
-            # même, pour encaisser son premier coup protégé.
+            # tour du combat) mais il va nous frapper et nous allons
+            # tirer : on s'arme quand même, pour encaisser son premier
+            # coup protégé. (Si on ne peut pas tirer, c'est
+            # `prep_shield()` qui s'en charge : l'armure « un tour
+            # avant ».)
             value = shield_value(me, o, usable, enemy, estimate=True)
         if value <= 0:
             continue  # le bouclier ne protège de rien : inutile
@@ -860,9 +865,15 @@ def log_report(me, usable, options, enemy):
     rel, absolu = analysis_lib.shields(enemy)
     incoming = _INCOMING
     incoming_text = f" | incoming {incoming:.0f}" if incoming > 0 else ""
+    # Notre propre bouclier : sans lui, impossible de vérifier dans le
+    # rapport si un coup encaissé était protégé.
+    my_rel, my_absolu = analysis_lib.shields(me)
+    shield_text = ""
+    if my_rel > 0 or my_absolu > 0:
+        shield_text = f", shield {my_rel:g}/{my_absolu:g}"
     logs_lib.log(f"Enemy {enemy.life} HP (shields {rel}/{absolu}) | "
                  f"me {me.life}/{me.maxLife} HP "
-                 f"(missing {analysis_lib.missing_life(me)})"
+                 f"(missing {analysis_lib.missing_life(me)}{shield_text})"
                  f"{incoming_text}")
 
     lines = []

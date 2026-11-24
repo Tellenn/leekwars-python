@@ -147,7 +147,8 @@ Conséquences sur le code :
     ne peut pas tirer mais que l'ennemi va nous atteindre au tour suivant
     (il est dans sa zone de menace), on pose le bouclier tout de suite,
     pour encaisser son premier coup protégé. C'est l'équivalent du
-    « buff un tour avant » pour l'armure ;
+    « buff un tour avant » pour l'armure. L'armure d'ouverture ne joue ce
+    rôle que si l'on **peut** tirer (on va encaisser des coups) ;
 - la **portée de l'ennemi est modélisée** (`libs/threat_lib.py`) : sa zone
   de menace est le disque de rayon `portée de son arme + ses PM` centré sur
   sa case. Quand on ne peut pas le toucher, on se place **hors de cette
@@ -198,7 +199,7 @@ Le rapport de combat est lu après coup : il ne doit pas être noyé.
 | Bloc | Fréquence | Contenu |
 |---|---|---|
 | identité | **une fois par combat** | nom de l'IA, force/agilité/sagesse/science, multiplicateur de dégâts, inventaire (effets parsés), équipement ignoré |
-| état | chaque tour | PV de l'ennemi, boucliers, PV manquants |
+| état | chaque tour | PV de l'ennemi, boucliers, PV manquants, **notre propre bouclier** (`shield R/A`) |
 | rentabilité | chaque tour | une ligne : `objet valeur/PT=score` par option encore jouable — pour une arme, la **valeur du tour** (tirs possibles × dégâts) et les PT **réellement dépensés** (équipement + tirs, plafonnés par `maxUses`) ; pour un buff, le gain estimé sur sa **durée** |
 | actions | chaque action | une ligne : tir (dégâts réels **vs dégâts attendus hors vol de vie**), refus du moteur nommé (`refused (MAX_USES)`), soin, buff (avec la force avant/après), bouclier, changement d'arme | ⚠️ la distance d'un tir qui **tue** la cible est journalisée après sa mort (sa case a changé) : elle ne reflète plus la portée |
 | ouverture | chaque tour qui le mérite | `Opening shield:` (armure posée avant les tirs : tours de survie gagnés, dégâts bloqués, `sauve la mort` si elle évite la mort) et `Opening buff:` (buff de force joué avant les tirs) |
@@ -462,7 +463,8 @@ dans `scenarios/duel.json`).
 | 43 | L'armure (puce de bouclier) n'était jouée que si son **rapport valeur/PT** battait celui d'un tir : sur un build force sans aucune protection, l'IA restait sans bouclier jusqu'au dernier moment, et le bouclier pouvait être joué **après** des tirs (donc après avoir subi le coup) | `libs/decision_lib.py` | **corrigé** — `shield_plan()` : l'armure est jouée en **ouverture de tour**, avant les tirs, **dès qu'elle est prête** (plus de cooldown), sauf si l'on peut tuer l'ennemi ; `can_still_shoot()` interdit de se retrouver sans aucun tir (sauf si le bouclier sauve la mort) |
 | 44 | Le **bouclier absolu** bloque un montant fixe **par coup**, mais le modèle le comptait **par tour** : la protection réelle d'une puce comme le Casque (+15) était sous-estimée d'autant de fois que l'ennemi nous frappait (pistolet : 4 coups/tour, machine gun : 9) | `libs/decision_lib.py`, `libs/threat_lib.py` | **corrigé** — `threat_lib.hits_per_turn()` (maxUses × effets de dégâts de l'arme adverse) et `shield_protection()` : la valeur du bouclier = les dégâts empêchés × la durée |
 | 45 | La valeur d'un tour de survie reste approchée : `damage_per_turn()` estime le nombre de tirs par `TP / coût` sans tenir compte du plafond `maxUses`, et l'hypothèse « un dégât empêché = un dégât infligé » ne donne aucune valeur aux PV économisés quand le nombre de tours ne change pas | `libs/decision_lib.py` | hypothèse assumée — à confronter à un combat de test |
-| 46 | L'armure n'était posée qu'**après** avoir encaissé le coup de l'ennemi : on ne pouvait pas s'armer avant le premier contact, quand l'ennemi approche hors de notre portée | `libs/decision_lib.py`, `Kepo_solo.py` | **corrigé** — `prep_shield()` : armure « un tour avant » (comme `prep_buff()` pour les buffs) : si on ne peut pas tirer et que l'ennemi est dans sa zone de menace, on pose le bouclier pour encaisser son prochain coup protégé |
+| 46 | L'armure n'était posée qu'**après** avoir encaissé le coup de l'ennemi : on ne pouvait pas s'armer avant le premier contact, quand l'ennemi approche hors de notre portée | `libs/decision_lib.py`, `Kepo_solo.py` | **corrigé** — `prep_shield()` : armure « un tour avant » (comme `prep_buff()` pour les buffs) : si on ne peut pas tirer et que l'ennemi est dans sa zone de menace, on pose le bouclier pour encaisser son prochain coup protégé ; l'armure d'ouverture ne joue ce rôle que si l'on peut tirer |
+| 47 | Le rapport de combat ne montrait **pas notre propre bouclier** : impossible de vérifier après coup si un coup encaissé était protégé (ni de mesurer l'effet de l'armure) | `libs/decision_lib.py` | **corrigé** — la ligne d'état affiche `me X/Y HP (missing Z, shield R/A)` |
 
 ---
 
