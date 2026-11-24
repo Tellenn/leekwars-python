@@ -425,6 +425,88 @@ def shield_value(me, o, usable, enemy, estimate=False):
     return blocked * duration
 
 
+#: Gain minimal (fraction) pour justifier qu'on se rapproche de l'ennemi
+#: afin d'utiliser une meilleure arme : on s'expose un peu plus.
+REPOSITION_MIN_GAIN = 0.25
+
+#: Nombre maximal de cases dont on se rapproche pour utiliser une meilleure
+#: arme (au-dela, on offre nos PV au critique de l'ennemi).
+REPOSITION_MAX_CLOSE = 2
+
+
+def reposition_for_best_weapon(me, enemy):
+    """Se poster pour utiliser la meilleure arme.
+
+    Les PM ne servent à rien pendant les tirs : si notre meilleure arme
+    (la plus rentable) ne peut pas toucher la cible alors qu'une arme
+    moins bonne le peut, on se place à sa portée (et sur sa ligne de
+    visée). La machine gun fait ~30 % de dégâts de plus que le pistolet,
+    mais seulement jusqu'à 6 cases.
+
+    Renvoie True si on s'est replacé.
+    """
+    if me.mp <= 0:
+        return False
+    usable, options = build_options(me)
+    # On compare les armes en VALEUR (les dégâts du tour), pas en rapport :
+    # c'est le tour de dégâts qu'on veut maximiser, et le rapport favorise
+    # l'arme bon marché (le pistolet : 10 dégâts x 9 tirs) alors qu'on peut
+    # la machine gun (30 dégâts x 3 tirs).
+    best = None
+    best_value = 0.0
+    usable_best = None
+    current = 0.0
+    for o in usable:
+        if not o["has_damage"]:
+            continue
+        if o["kind"] == "chip" and o["used"]:
+            continue
+        value = attack_value(me, o, enemy)[0]
+        if value > best_value:
+            best_value = value
+            best = o
+        if not analysis_lib.can_hit(o["obj"], me, enemy):
+            continue
+        if value > current:
+            current = value
+            usable_best = o
+    if best == None:
+        return False
+    obj = best["obj"]
+    if usable_best is best:
+        return False  # on tire déjà avec la meilleure arme
+    if usable_best == None:
+        return False  # aucune arme ne touche : le rapprochement s'en charge
+    # Si l'ennemi peut déjà nous atteindre, se rapprocher d'une case ne
+    # nous expose pas davantage : le gain ne suffit pas à le justifier.
+    exposed = threat_lib.in_reach(enemy, me)
+    if not exposed and current > 0 \
+            and best_value < current * (1 + REPOSITION_MIN_GAIN):
+        return False  # le gain ne vaut pas l'exposition
+    blocker = analysis_lib.blocked_by(obj, me, enemy)
+    if blocker == "los":
+        return False  # un obstacle ne se corrige pas en se déplaçant
+    before = me.cell.distance(enemy.cell)
+    if blocker == "align":
+        # On doit se placer sur la ligne de visée de l'arme.
+        align_move(me, enemy, obj)
+    else:
+        # On doit se rapprocher : la portée de l'arme. On ne se rapproche
+        # que de quelques cases (au-dela, on offre nos PV au critique de
+        # l'ennemi pour un gain de dégâts marginal).
+        low = max(0, getattr(obj, "minRange", 0) or 0)
+        high = max(0, getattr(obj, "maxRange", 0) or 0)
+        distance = max(low, min(high, before))
+        if before - distance > REPOSITION_MAX_CLOSE:
+            return False
+        threat_lib.apply_kite(me, enemy, distance, obj)
+    after = me.cell.distance(enemy.cell)
+    if after == before:
+        return False  # on n'a pas pu se placer
+    logs_lib.log(f"Reposition: {obj} ({blocker}, distance {before} -> {after})")
+    return True
+
+
 def can_still_shoot(me, usable, spent):
     # Reste-t-il de quoi tirer après avoir payé `spent` points de tour ?
     #

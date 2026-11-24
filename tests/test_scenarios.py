@@ -525,7 +525,8 @@ class MultiWeaponScenarioTest(unittest.TestCase):
 
     def test_ai_starts_with_a_weapon_that_can_hit(self):
         # La machine gun est plus rentable mais ne tire qu'en ligne : on
-        # commence par le pistolet, qui peut toucher la cible.
+        # commence par le pistolet, qui peut toucher la cible... puis on se
+        # replace pour utiliser la machine gun (3x plus de dégâts par tir).
         machine_gun = support.line_weapon(range_=6, damage=30, cost=1)
         pistol = support.pistol(range_=6, damage=10, cost=1)
         fight = support.make_fight(
@@ -540,8 +541,69 @@ class MultiWeaponScenarioTest(unittest.TestCase):
 
         ai.turn()
 
-        self.assertIs(fight.me.weapon, pistol)
+        # On a commencé par une arme qui touche, puis on s'est replacé
+        # pour la machine gun.
         self.assertTrue(any("can hit" in line for line in fight.logs))
+        self.assertTrue(any("Reposition:" in line for line in fight.logs))
+        self.assertIs(fight.me.weapon, machine_gun)
+
+    def test_the_ai_repositions_to_use_a_better_weapon(self):
+        # La machine gun (portée 6, 3 coups) fait plus de dégâts par tour
+        # que le pistolet (portée 7) : à 7 cases, l'IA se rapproche pour
+        # l'utiliser.
+        machine_gun = builder.weapon(
+            "machine_gun",
+            cost=4,
+            min_range=1,
+            max_range=6,
+            max_uses=3,
+            features=[
+                builder.feature(
+                    Effect.DAMAGE, Effect.Target.ENEMIES, 10, 15,
+                )
+                for _ in range(3)
+            ],
+        )
+        machine_gun.launchType = 1  # LINE : ne tire qu'en ligne
+        pistol = support.pistol(range_=7, damage=15, cost=3)
+        fight = support.make_fight(
+            me=builder.entity(
+                life=100, max_life=100, tp=10, max_tp=10, mp=10, max_mp=10,
+                cell=(0, 0),
+                weapons=[pistol, machine_gun],
+            ),
+            enemies=[builder.entity(life=500, max_life=500, cell=(7, 0))],
+        )
+        ai = support.load_ai(fight)
+
+        ai.turn()
+
+        self.assertTrue(any("Reposition:" in line for line in fight.logs))
+        self.assertLessEqual(
+            fight.me.cell.distance(fight.enemies[0].cell), 6)
+        self.assertTrue(any("Shot #0 (machine_gun)" in line
+                            for line in fight.logs))
+
+    def test_the_ai_does_not_close_in_too_much_for_a_better_weapon(self):
+        # Le pistolet (portée 1) ferait plus de dégâts par tour que le
+        # fusil, mais se placer à 1 case de l'ennemi est trop risqué :
+        # l'IA garde le fusil.
+        pistol = support.pistol(range_=1, damage=10, cost=1)
+        rifle = support.rifle(range_=5, damage=30, cost=3)
+        fight = support.make_fight(
+            me=builder.entity(
+                life=100, max_life=100, tp=10, max_tp=10, mp=10, max_mp=10,
+                cell=(0, 0),
+                weapons=[pistol, rifle],
+            ),
+            enemies=[builder.entity(life=100, max_life=100, cell=(4, 0))],
+        )
+        ai = support.load_ai(fight)
+
+        ai.turn()
+
+        self.assertFalse(any("Reposition:" in line for line in fight.logs))
+        self.assertEqual(fight.me.cell.distance(fight.enemies[0].cell), 4)
 
     def test_ai_aligns_itself_to_shoot_a_line_weapon(self):
         # La machine gun « ne peut tirer qu'en ligne » : l'IA doit se

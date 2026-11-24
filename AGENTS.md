@@ -168,13 +168,22 @@ Flux d'un tour (`ai.turn()`) :
 2. `decision_lib.begin_turn()` — mesure des dégâts reçus au tour précédent.
 3. `equipment_lib.equip_starting_weapon()` — équipe la meilleure arme
    (ratio dégâts/PT) si aucune n'est en main.
-4. `decision_lib.attack()` — **armure d'ouverture d'abord** (le bouclier
+4. `decision_lib.reposition_for_best_weapon()` — les PM ne servent à rien
+   pendant les tirs : si la **meilleure** arme (en dégâts de tour) ne peut
+   pas toucher la cible alors qu'une arme moins bonne le peut, on se
+   place à sa portée et sur sa ligne de visée (2 cases max, et seulement
+   si l'ennemi peut déjà nous atteindre ou si le gain vaut +25 %). La
+   machine gun (portée 6, 3 coups) fait ~14 % de dégâts de tour de plus
+   que le pistolet (portée 7) : à 7 cases, on se rapproche pour
+   l'utiliser. Ce tour-là, on **ne fuit pas** (se replier annulerait le
+   gain).
+5. `decision_lib.attack()` — **armure d'ouverture d'abord** (le bouclier
    est de la survie, pas un ratio : il est posé avant les tirs dès qu'il
    est prêt), puis **buff d'ouverture** (s'il est rentable), puis boucle :
    on **re-score** toutes les options à chaque itération (les PV, les PT
    et les boucliers changent), on exécute la meilleure (attaque / soin /
    buff / bouclier), on mesure les dégâts réels vs attendus.
-5. Si rien n'était à portée : `decision_lib.approach()` — le plan dépend
+6. Si rien n'était à portée : `decision_lib.approach()` — le plan dépend
    de ce qui bloque (`decision_lib.firing_blocker()`) :
    - **trop près** (portée minimale) : on recule jusqu'à la case de tir ;
    - **pas aligné** (arme « en ligne ») : on se place sur la ligne de la
@@ -184,16 +193,16 @@ Flux d'un tour (`ai.turn()`) :
      place hors de la zone de menace de l'ennemi
      (`threat_lib.kite_distance()`), sinon on se rapproche simplement ;
    puis on rejoue le calcul (la rentabilité change avec la distance).
-6. Si on n'a toujours pas pu tirer : `decision_lib.prep_shield()` puis
+7. Si on n'a toujours pas pu tirer : `decision_lib.prep_shield()` puis
    `decision_lib.prep_buff()` — armure « un tour avant » (l'ennemi va nous
    frapper au tour suivant : on pose le bouclier maintenant) puis buff
    « un tour avant » (les PT sont inutilisés, le tour suivant sera
    amplifié) s'il bat l'attente de l'ouverture du tour suivant.
-7. `decision_lib.hide()` — **seulement si `HIDE_AFTER_ATTACK`** (par défaut
+8. `decision_lib.hide()` — **seulement si `HIDE_AFTER_ATTACK`** (par défaut
    on ne fuit pas : Kepo est un DPS). La fuite est **sautee** si l'ennemi
    ne peut pas nous atteindre (hors de sa zone de menace) : elle ne ferait
    que perdre nos PM et l'initiative.
-8. `decision_lib.end_turn()` — mémorise nos PV (base de la mesure du tour
+9. `decision_lib.end_turn()` — mémorise nos PV (base de la mesure du tour
    suivant).
 
 ### Politique de journal
@@ -471,6 +480,7 @@ dans `scenarios/duel.json`).
 | 47 | Le rapport de combat ne montrait **pas notre propre bouclier** : impossible de vérifier après coup si un coup encaissé était protégé (ni de mesurer l'effet de l'armure) | `libs/decision_lib.py` | **corrigé** — la ligne d'état affiche `me X/Y HP (missing Z, shield R/A)` |
 | 48 | Le **soin** était choisi sur son rapport `PV/PT` : un soin bon marché (27 PV pour 2 PT) pouvait voler la place d'un tir à 45 PV, alors que faire 30 de dégâts vaut mieux que 25 de soin | `libs/decision_lib.py` | **corrigé** — le soin n'est proposé que si on ne peut pas faire autant de dégâts que le soin vaut (comparaison sur les **valeurs**, plus sur les rapports) ; exception : le soin qui **sauve notre mort** passe avant tout (`MANDATORY`) |
 | 49 | Le **bouclier absolu de la cible** était retiré **une fois par tir** au lieu d'**une fois par coup** : contre une cible avec 17 de bouclier, la machine gun (3 coups) était surestimée de 73 % (80 de dégâts au lieu de 46) — mesuré sur le moteur (combat #54914966 : 39 et 63 dégâts réels pour 80 attendus) | `libs/analysis_lib.py` | **corrigé** — `analyse_equipment()` garde un coup par effet de dégâts (`damage_hits`) et `hit_damage()` applique le bouclier à chaque coup (fr/Résistance) |
+| 50 | L'IA s'arrêtait dès que **n'importe quelle** arme pouvait toucher : elle se postait à 7 cases (portée du pistolet) et la machine gun (portée 6, 3 coups, +14 % de dégâts de tour) restait inutilisable | `libs/decision_lib.py`, `Kepo_solo.py` | **corrigé** — `reposition_for_best_weapon()` : on se place (avec les PM, avant les tirs) à portée et aligné de la meilleure arme, en VALEUR (dégâts du tour) ; 2 cases max, et seulement si l'ennemi peut déjà nous atteindre (sinon il faut un gain de +25 %) ; ce tour-là on ne fuit pas |
 
 ---
 

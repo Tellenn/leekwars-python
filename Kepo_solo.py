@@ -72,6 +72,11 @@ def turn():
     # Step 0: have a weapon in hand from the start
     equipment_lib.equip_starting_weapon(me, enemy)
 
+    # On se poste pour utiliser la meilleure arme : les PM ne servent à
+    # rien pendant les tirs, et la machine gun (portée 6) fait bien plus
+    # de dégâts que le pistolet (portée 7) quand elle est à portée.
+    repositioned = decision_lib.reposition_for_best_weapon(me, enemy)
+
     did_hit = decision_lib.attack(me, enemy)
 
     # If nothing was in range, reposition ourselves: in 1v1 we stay out of
@@ -95,8 +100,10 @@ def turn():
     # Enfin, on peut tenter de casser la ligne de vue — mais seulement si
     # on a réellement tiré : se cacher sans avoir rien fait garantit
     # qu'on ne pourra plus tirer du tout (le décor nous sépare de la
-    # cible, et le plan de placement ne nous rapprochera pas).
-    if HIDE_AFTER_ATTACK and did_hit:
+    # cible, et le plan de placement ne nous rapprochera pas). Et si on
+    # s'est replacé pour utiliser la meilleure arme, on ne fuit pas : on
+    # resterait hors de sa portée.
+    if HIDE_AFTER_ATTACK and did_hit and not repositioned:
         decision_lib.hide(me, enemy)
 
     # Mémorise nos PV : la différence avec le tour suivant mesurera les
