@@ -40,6 +40,12 @@ RIFLE_DAMAGE = 30           # arme "lourde", plus chère
 HEAL_AMOUNT = 15            # soin brut de la puce de soin
 STRENGTH_BUFF = 20          # buff de force brut
 
+#: Masques de cibles réels du catalogue du jeu (api/chip/get-all) :
+#: 31 = ENNEMIS|ALLIES|CASTER|NON_SUMMONS|SUMMONS (armes, bandage...),
+#: 30 = ALLIES|CASTER|NON_SUMMONS|SUMMONS (puces de buff sur soi).
+GAME_TARGETS_ALL = 31
+GAME_TARGETS_SELF = 30
+
 
 def load_ai(fight):
     """Installe le mock du SDK et recharge `Kepo_solo` (son `me` est figé au
@@ -191,3 +197,42 @@ def shield_chip(relative=10, absolute=0, turns=2, cost=2, name="forteresse"):
         ))
     return builder.chip(name, cost=cost, min_range=0, max_range=0,
                         features=features)
+
+
+def protein_chip(min_value=80, max_value=100, turns=2, cost=3, cooldown=3):
+    """Puce "Protéines" (id 8 du catalogue) : +80-100 force brute (RAW,
+    donc pas amplifiée par la science) pendant 2 tours, 3 PT, 3 tours de
+    cooldown. Le masque de cibles est celui du catalogue (30)."""
+    return builder.chip(
+        "protein",
+        cost=cost,
+        min_range=0,
+        max_range=4,
+        features=[
+            builder.feature(
+                builder.Effect.RAW_BUFF_STRENGTH,
+                GAME_TARGETS_SELF,
+                min_value, max_value, turns=turns,
+            )
+        ],
+        cooldown=cooldown,
+    )
+
+
+def game_heal_chip(amount=25, cost=2, cooldown=1):
+    """Puce de soin du catalogue (bandage, id 3) : effet HEAL avec le
+    masque 31 du site (il contient le bit ENNEMIS)."""
+    return builder.chip(
+        "bandage",
+        cost=cost,
+        min_range=0,
+        max_range=6,
+        features=[
+            builder.feature(
+                builder.Effect.HEAL,
+                GAME_TARGETS_ALL,
+                amount, amount,
+            )
+        ],
+        cooldown=cooldown,
+    )

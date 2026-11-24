@@ -125,6 +125,69 @@ class AnalyseEquipmentTest(unittest.TestCase):
         self.assertEqual(parts["nova_raw"], 0)
 
 
+class GameTargetMaskTest(unittest.TestCase):
+    """Les masques de cibles réels du catalogue (31 pour les soins, 30 pour
+    les buffs sur soi) : c'est le TYPE de l'effet qui décide, pas le masque.
+
+    Sans cette distinction, le bandage du joueur (masque 31) était lu comme
+    une attaque et la puce était ignorée par l'IA.
+    """
+
+    def setUp(self):
+        install(support.make_fight())
+
+    def test_a_heal_with_the_game_mask_is_parsed_as_a_heal(self):
+        parts = analysis_lib.analyse_equipment(
+            builder.entity(), support.game_heal_chip(amount=25))
+
+        self.assertEqual(parts["heal_raw"], 25)
+        self.assertEqual(parts["amp_raw"], 0)
+        self.assertEqual(parts["buff_strength"], 0)
+
+    def test_a_damage_with_the_game_mask_is_still_damage(self):
+        weapon = builder.weapon(
+            "pistol",
+            cost=3,
+            features=[builder.feature(Effect.DAMAGE, 31, 15, 20)],
+        )
+        parts = analysis_lib.analyse_equipment(builder.entity(), weapon)
+
+        self.assertEqual(parts["amp_raw"], 17.5)
+
+    def test_the_buff_duration_is_parsed(self):
+        parts = analysis_lib.analyse_equipment(
+            builder.entity(), support.protein_chip(turns=2))
+
+        self.assertEqual(parts["buff_strength"], 90)  # (80 + 100) / 2
+        self.assertEqual(parts["buff_turns"], 2)
+
+    def test_a_buff_that_does_not_target_the_caster_is_ignored(self):
+        # "Doping" : le masque 26 (ALLIES|NON_SUMMONS|SUMMONS) ne contient
+        # pas le bit CASTER : le buff ne nous concerne pas.
+        chip = builder.chip(
+            "doping",
+            cost=5,
+            features=[
+                builder.feature(Effect.BUFF_STRENGTH, 26, 30, 35, turns=3)
+            ],
+        )
+        parts = analysis_lib.analyse_equipment(builder.entity(), chip)
+
+        self.assertEqual(parts["buff_strength"], 0)
+
+    def test_a_heal_that_does_not_target_the_caster_is_ignored(self):
+        # "Popcorn" : le masque 26 ne contient pas le bit CASTER, le soin
+        # ne s'applique pas à nous.
+        chip = builder.chip(
+            "popcorn",
+            cost=6,
+            features=[builder.feature(Effect.HEAL, 26, 35, 45)],
+        )
+        parts = analysis_lib.analyse_equipment(builder.entity(), chip)
+
+        self.assertEqual(parts["heal_raw"], 0)
+
+
 class ShieldAnalysisTest(unittest.TestCase):
     """Boucliers (fr/Résistance) : relatif en %, absolu en montant."""
 

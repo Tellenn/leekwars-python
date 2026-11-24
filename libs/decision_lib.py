@@ -126,6 +126,21 @@ def option_spent(me, o):
     return o["cost"] + o["switch"]
 
 
+def chip_on_cooldown(obj):
+    # Une puce en cooldown ne peut pas être jouée : le moteur répond
+    # `Fight.Use.INVALID_COOLDOWN`. On ne la propose donc pas (sinon l'IA
+    # gaspille son ouverture de tour sur une action refusée).
+    #
+    # `Chip.currentCooldown` est le cooldown restant pour le lanceur ;
+    # l'attribut peut manquer (anciens runtimes) -> puce considérée prête.
+    cooldown = getattr(obj, "currentCooldown", 0)
+    try:
+        cooldown = int(cooldown)
+    except (TypeError, ValueError):
+        cooldown = 0
+    return cooldown > 0
+
+
 def build_options(me):
     # One option = dict with "kind", "obj", "cost", "switch" (+1 TP to equip
     # a weapon not held, 0 for a chip), parsed "parts" and flags:
@@ -139,6 +154,7 @@ def build_options(me):
         options.append({
             "kind": "weapon", "obj": weapon, "cost": weapon.cost,
             "switch": sw, "parts": parts, "used": False,
+            "on_cooldown": False,
             "has_damage": parts["amp_raw"] > 0 or parts["flat_sub"] > 0
                           or parts["nova_raw"] > 0 or parts["kill"],
             "is_buff": False, "is_heal": False, "is_shield": False
@@ -150,6 +166,7 @@ def build_options(me):
         options.append({
             "kind": "chip", "obj": chip, "cost": chip.cost, "switch": 0,
             "parts": parts, "used": False,
+            "on_cooldown": chip_on_cooldown(chip),
             "has_damage": parts["amp_raw"] > 0 or parts["flat_sub"] > 0
                           or parts["nova_raw"] > 0 or parts["kill"],
             "is_buff": has_buff,
@@ -160,6 +177,8 @@ def build_options(me):
 
     usable = []
     for o in options:
+        if o["on_cooldown"]:
+            continue  # puce en cooldown : le moteur la refuserait
         if o["has_damage"] or o["is_buff"] or o["is_heal"] or o["is_shield"]:
             usable.append(o)
     return usable, options
@@ -185,10 +204,17 @@ def best_attack_now(me, usable, enemy):
 
 
 def buff_value(me, o, reference_attack, enemy):
-    # Estimated extra damage granted by a buff chip for the REST OF THE TURN
-    # (horizon approximation: longer-lasting buffs are undervalued).
+    # Valeur estimée d'un buff de force / de puissance / de TP, sur
+    # l'échelle "valeur / TP".
+    #
+    # Le buff de force est valorisé sur toute sa durée (voir
+    # strength_buff_gain) : c'est la même estimation que celle qui décide
+    # du buff d'ouverture, donc le journal reste cohérent.
     if reference_attack == None:
         return 0
+    if o["parts"]["buff_strength"] > 0:
+        return strength_buff_gain(me, o, reference_attack, enemy)
+
     ref = reference_attack["parts"]
     ref_gross = ref["amp_raw"] * analysis_lib.force_crit_multiplier(me) \
         + ref["flat_sub"]
@@ -207,10 +233,6 @@ def buff_value(me, o, reference_attack, enemy):
         return 0
 
     value = 0
-    if o["parts"]["buff_strength"] > 0:
-        gain_per_shot = (analysis_lib.expected_damage(ref, enemy, me)
-                         * o["parts"]["buff_strength"] / (100 + me.strength))
-        value += shots * gain_per_shot
     if o["parts"]["buff_power"] > 0:
         # ASSUMPTION: power adds flat damage per shot (to be confirmed in game)
         value += shots * o["parts"]["buff_power"] * shield_factor
@@ -330,10 +352,15 @@ def strength_buff_gain(me, buff_option, reference, enemy):
     # Le buff consomme des PT : il peut repousser un tir. Il ne vaut le coup
     # que si le total avec buff dépasse le total sans buff.
     #
-    # Horizon : les tirs du tour uniquement. Un buff de force dure souvent
-    # plusieurs tours, donc la vraie valeur est plus haute : la règle est
-    # conservatrice (elle peut refuser un buff qui serait rentable sur la
-    # durée). À revoir si le build devient 'force + buff permanent'.
+    # HORIZON : la durée du buff (`parts["buff_turns"]`), pas seulement le
+    # tour courant. Un buff qui dure plusieurs tours (puce "Protéines" :
+    # +80-100 force pendant 2 tours) continue d'amplifier les tirs des
+    # tours suivants : ne compter que le tour courant le rendait
+    # systématiquement non rentable (il nous fait perdre un tir pour rien),
+    # et l'IA n'utilisait jamais la puce.
+    #
+    # Le gain est plafonné par les PV restants de l'ennemi : des dégâts
+    # au-delà de sa mort ne valent rien.
     attack_cost = reference["cost"] + reference["switch"]
     if attack_cost <= 0:
         return 0
@@ -352,7 +379,25 @@ def strength_buff_gain(me, buff_option, reference, enemy):
         return 0
     boost = buff_option["parts"]["buff_strength"]
     amplified = damage * (100 + me.strength + boost) / (100 + me.strength)
-    return shots_with * amplified - shots_without * damage
+
+    # Tour courant : le buff peut nous coûter un tir.
+    value = shots_with * amplified - shots_without * damage
+
+    # Tours suivants : le buff reste actif. Au tour suivant, l'arme est
+    # déjà équipée (pas de PT d'équipement) et les PT sont pleins.
+    extra_turns = buff_option["parts"]["buff_turns"] - 1
+    if extra_turns > 0 and reference["cost"] > 0:
+        next_shots = int(me.tp / reference["cost"])
+        if cap is not None:
+            next_shots = min(next_shots, cap)
+        if next_shots > 0:
+            extra = next_shots * extra_turns * (amplified - damage)
+            remaining = enemy.life - shots_with * amplified
+            if extra > remaining:
+                extra = remaining
+            if extra > 0:
+                value += extra
+    return value
 
 
 def strength_buff_plan(me, usable, enemy):
@@ -386,6 +431,8 @@ def option_score(me, o, usable, enemy):
         return 0, 0
     if o["kind"] == "chip" and o["used"]:
         return 0, 0
+    if o["kind"] == "chip" and o.get("on_cooldown"):
+        return 0, 0  # le moteur refuserait l'action
     if o["is_heal"]:
         value = heal_value(me, o)
     elif o["is_shield"] and not o["has_damage"]:
@@ -420,15 +467,20 @@ def log_identity(me, options):
 
     items = []
     ignored = []
+    cooling = []
     for o in options:
         label = str(o["obj"])
         if o["has_damage"] or o["is_buff"] or o["is_heal"] or o["is_shield"]:
             details = "; ".join(o["parts"]["details"])
             items.append(f"{label} [{details}]" if details else label)
+        elif o.get("on_cooldown"):
+            cooling.append(label)
         else:
             ignored.append(label)
     if items:
         logs_lib.log_once("items", "Items: " + " ; ".join(items))
+    if cooling:
+        logs_lib.log_once("cooling", "On cooldown: " + ", ".join(cooling))
     if ignored:
         logs_lib.log_once("ignored",
                           "Ignored (no damage, no buff, no heal, no shield): "
@@ -504,6 +556,7 @@ def execute(me, o, enemy, shot):
         code = me.useWeapon(enemy)
         return True, code
     life_before = me.life
+    strength_before = me.strength
     code = me.useChip(o["obj"], enemy if o["has_damage"] else me)
     o["used"] = True
     if code < 0:
@@ -516,7 +569,11 @@ def execute(me, o, enemy, shot):
         logs_lib.log(f"Shield: {o['obj']} [{details}]")
     elif o["is_buff"]:
         details = "; ".join(o["parts"]["details"])
-        logs_lib.log(f"Buff: {o['obj']} [{details}]")
+        # La force réelle après le buff est journalisée : sur le site, le
+        # buff modifie la stat du poireau (c'est ce que l'IA relit au tour
+        # suivant pour estimer ses dégâts).
+        logs_lib.log(f"Buff: {o['obj']} [{details}] "
+                     f"(strength {strength_before:g} -> {me.strength:g})")
     else:
         logs_lib.log(f"Chip: {o['obj']} -> enemy {enemy.life} HP")
     return False, code
@@ -536,9 +593,11 @@ def attack(me, enemy):
     # tous les tirs du tour (et les suivants, si le buff dure).
     opening_buff, buff_gain = strength_buff_plan(me, usable, enemy)
     if opening_buff != None:
+        duration = opening_buff["parts"]["buff_turns"]
+        duration_text = f"{duration} turn(s)" if duration > 0 else "instant"
         logs_lib.log(f"Opening buff: {opening_buff['obj']} "
                      f"(+{opening_buff['parts']['buff_strength']:.0f} strength, "
-                     f"~+{buff_gain:.0f} dmg this turn)")
+                     f"~+{buff_gain:.0f} dmg, {duration_text})")
         execute(me, opening_buff, enemy, 0)
 
     log_report(me, usable, all_options, enemy)

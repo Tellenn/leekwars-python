@@ -200,6 +200,94 @@ class TurnScenarioTest(unittest.TestCase):
         self.assertFalse(any("Buff: " in line
                              for line in fight.logs))
 
+    def test_ai_casts_the_protein_chip_even_if_it_costs_a_shot(self):
+        # Puce "Protéines" : +80-100 force pendant 2 tours, 3 PT.
+        # Le buff nous fait perdre un tir AU TOUR, mais il amplifie aussi
+        # les tirs du tour suivant : l'IA doit le jouer.
+        fight = support.make_fight(
+            me=builder.entity(
+                life=175, max_life=175, tp=10, max_tp=10, mp=3, max_mp=3,
+                strength=110, cell=(0, 0),
+                weapons=[support.pistol(damage=17, cost=3, range_=7)],
+                chips=[support.protein_chip()],
+            ),
+            enemies=[builder.entity(life=600, max_life=600, cell=(3, 0))],
+        )
+        ai = support.load_ai(fight)
+
+        ai.turn()
+
+        # le buff est passé (force augmentée) et il est passé AVANT les tirs
+        self.assertGreater(fight.me.strength, 110)
+        buff_index = next(i for i, line in enumerate(fight.logs)
+                           if "Buff: " in line)
+        shot_index = next(i for i, line in enumerate(fight.logs)
+                          if "Shot #" in line)
+        self.assertLess(buff_index, shot_index)
+
+    def test_ai_does_not_cast_a_one_turn_strength_buff_that_costs_a_shot(self):
+        # Même situation, mais un buff d'un seul tour : il n'amplifie que
+        # les tirs du tour, il ne vaut pas le tir perdu.
+        fight = support.make_fight(
+            me=builder.entity(
+                life=175, max_life=175, tp=10, max_tp=10, mp=3, max_mp=3,
+                strength=110, cell=(0, 0),
+                weapons=[support.pistol(damage=17, cost=3, range_=7)],
+                chips=[support.protein_chip(turns=1)],
+            ),
+            enemies=[builder.entity(life=600, max_life=600, cell=(3, 0))],
+        )
+        ai = support.load_ai(fight)
+
+        ai.turn()
+
+        self.assertEqual(fight.me.strength, 110)
+        self.assertFalse(any("Buff: " in line
+                             for line in fight.logs))
+
+    def test_ai_does_not_play_a_chip_that_is_on_cooldown(self):
+        # La puce "Protéines" a 3 tours de cooldown : le moteur la refuse
+        # (INVALID_COOLDOWN), l'IA ne doit pas tenter de la jouer.
+        chip = support.protein_chip()
+        chip.currentCooldown = 2
+        fight = support.make_fight(
+            me=builder.entity(
+                life=175, max_life=175, tp=10, max_tp=10, mp=3, max_mp=3,
+                strength=110, cell=(0, 0),
+                weapons=[support.pistol(damage=17, cost=3, range_=7)],
+                chips=[chip],
+            ),
+            enemies=[builder.entity(life=600, max_life=600, cell=(3, 0))],
+        )
+        ai = support.load_ai(fight)
+
+        ai.turn()
+
+        self.assertEqual(fight.me.strength, 110)
+        self.assertFalse(any("Buff: " in line
+                             for line in fight.logs))
+        self.assertFalse(any("refused" in line
+                             for line in fight.logs))
+
+    def test_ai_uses_a_heal_chip_with_the_game_target_mask(self):
+        # Le bandage du catalogue a le masque 31 (il contient le bit
+        # ENNEMIS) : l'IA doit quand même le voir comme un soin.
+        fight = support.make_fight(
+            me=builder.entity(
+                life=40, max_life=100, tp=10, max_tp=10, mp=10, max_mp=10,
+                cell=(0, 0),
+                weapons=[support.pistol(damage=10, cost=3)],
+                chips=[support.game_heal_chip(amount=25, cost=2)],
+            ),
+            enemies=[builder.entity(life=100, max_life=100, cell=(1, 0))],
+        )
+        ai = support.load_ai(fight)
+
+        ai.turn()
+
+        self.assertEqual(fight.me.life, 65)  # 40 + 25 PV de soin
+        self.assertTrue(any("Heal: " in line for line in fight.logs))
+
     def test_ai_can_stay_in_range_instead_of_fleeing(self):
         # Kepo_solo est un DPS brut : la fuite de fin de tour est optionnelle
         # (HIDE_AFTER_ATTACK).

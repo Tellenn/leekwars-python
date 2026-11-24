@@ -91,6 +91,16 @@ Conséquences sur le code :
 - le **buff de force part AVANT les tirs** (`strength_buff_plan()`) : il
   multiplie tous les tirs du tour. Il n'est lancé que si le total de dégâts
   avec buff dépasse le total sans buff (le buff peut repousser un tir) ;
+- l'**horizon du buff** est sa durée (`parts["buff_turns"]`), pas seulement
+  le tour courant : la puce « Protéines » (+80-100 force, 2 tours) continue
+  d'amplifier les tirs du tour suivant, et ne vaut donc pas le tir qu'elle
+  fait perdre aujourd'hui. Le gain est plafonné par les PV restants de
+  l'ennemi ;
+- une **puce en cooldown** (`Chip.currentCooldown`) n'est pas proposée : le
+  moteur la refuse (`Fight.Use.INVALID_COOLDOWN`) ;
+- la **classification d'un effet** repose sur son *type*, pas sur son masque
+  de cibles : le catalogue utilise le masque 31 pour les soins comme pour les
+  attaques, un masque 30 pour les buffs sur soi ;
 - la **fuite de fin de tour** est optionnelle : `HIDE_AFTER_ATTACK` dans
   `Kepo_solo.py`. `False` (défaut) = DPS pur, on garde le tempo offensif ;
   `True` = comportement « shoot and hide ». Un test verrouille les deux
@@ -141,8 +151,8 @@ Le rapport de combat est lu après coup : il ne doit pas être noyé.
 |---|---|---|
 | identité | **une fois par combat** | nom de l'IA, force/agilité/sagesse/science, multiplicateur de dégâts, inventaire (effets parsés), équipement ignoré |
 | état | chaque tour | PV de l'ennemi, boucliers, PV manquants |
-| rentabilité | chaque tour | une ligne : `objet valeur/PT=score` par option encore jouable — pour une arme, la **valeur du tour** (tirs possibles × dégâts) et les PT **réellement dépensés** (équipement + tirs, plafonnés par `maxUses`) |
-| actions | chaque action | une ligne : tir (dégâts réels **vs dégâts attendus hors vol de vie**), refus du moteur nommé (`refused (MAX_USES)`), soin, buff, bouclier, changement d'arme |
+| rentabilité | chaque tour | une ligne : `objet valeur/PT=score` par option encore jouable — pour une arme, la **valeur du tour** (tirs possibles × dégâts) et les PT **réellement dépensés** (équipement + tirs, plafonnés par `maxUses`) ; pour un buff, le gain estimé sur sa **durée** |
+| actions | chaque action | une ligne : tir (dégâts réels **vs dégâts attendus hors vol de vie**), refus du moteur nommé (`refused (MAX_USES)`), soin, buff (avec la force avant/après), bouclier, changement d'arme |
 | positionnement | chaque repositionnement | portée ennemie + zone de menace, distance visée, distance obtenue (`Kiting:` / `Position:`) |
 
 Mécanique : `libs/logs_lib.log_once(clé, message)` n'écrit qu'une fois par
@@ -261,6 +271,9 @@ Récapitulatif de l'API Python : **`docs/leekwars-api-python.md`**.
 | Science | amplifie les buffs `BUFF_*` (pas les `RAW_*`) | `docs/encyclopedia/effets.md` |
 | Effets | 59 types + masques de cibles (`ENEMIES=1`, `ALLIES=2`, `CASTER=4`, `NON_SUMMONS=8`, `SUMMONS=16`) | `docs/encyclopedia/effets.md` |
 | Armes : coût et plafond | `Item.cost` = PT par utilisation, `Item.maxUses` = utilisations **par tour** (compteur `Entity.itemUses()`), dégâts de base = `value1 + rand(0..value2)` | mesuré sur le moteur (combat de test #54910256 : pistol `cost=3`, `maxUses=4` → 4 tirs puis refus) |
+| Puces : données et masques | `chip/get-all` : `value1`/`value2` → `Feature.minValue`/`maxValue` (= value1, value1+value2), `turns` = durée de l'effet, `cooldown` = tours de recharge, `effects[].id` = type d'effet (`Effect.Type`) | catalogue du site (`api/chip/get-all`) + journal de combat (le tiret affiche « damage: 15.0-20.0 », soit min/max) |
+| Masques de cibles | 31 = ENNEMIS\|ALLIES\|CASTER\|NON_SUMMONS\|SUMMONS (armes, soins), 30 = ALLIES\|CASTER\|NON_SUMMONS\|SUMMONS (buffs sur soi), 26 = sans CASTER (buffs d'alliés) | catalogue du site (`api/chip/get-all`) |
+| Puce « Protéines » (id 8) | `RAW_BUFF_STRENGTH` (38) 80-100, 2 tours, 3 PT, cooldown 3 — buff **brut** (pas amplifié par la science) | catalogue du site (`api/chip/get-all`) |
 | Érosion | les dégâts subis réduisent la **vie maximum** : 5 % des dégâts classiques, 10 % du poison, +10 % sur un coup critique ; les boucliers atténuent l'érosion | `docs/encyclopedia/erosion.md` |
 | Ligne de vue | `Item.needsLos` : la plupart des armes l'exigent, 11 puces du catalogue frappent sans (trébuchet, étincelle, repiquage, picquant…) | `docs/leekwars-api-python.md` + données du jeu (`weapon/get-all`, `chip/get-all`) |
 | Distance | le moteur compte la portée avec `Cell.distance()` : **une diagonale vaut 2 cases** (`2·min(dx,dy) + |dx−dy|`) — c'est la métrique à utiliser pour toute comparaison de portée | mesuré sur le moteur (combat de test #54912618 : le fusil, portée 7, est accepté à distance 7 ; la puce, portée 5, est refusée) — **le mock utilise le chebyshev** : écart connu (cf. §8, #27) |
@@ -354,6 +367,11 @@ dans `scenarios/duel.json`).
 | 25 | La **fuite de fin de tour** partait même quand l'ennemi ne pouvait pas nous atteindre : elle jetait nos PM et annulait le positionnement « kiting » | `libs/decision_lib.py` | **corrigé** (`hide()` saute la fuite si l'ennemi est hors de sa zone de menace) |
 | 26 | Hypothèses du modèle de menace : PM de l'ennemi = `maxMP` (remis à zéro à chaque tour), ligne de vue non modélisée, puces offensives ennemies prises en compte (hypothèse prudente) | `libs/threat_lib.py` | hypothèses assumées — à confronter à un combat de test |
 | 27 | Le **mock** et le site ne mesurent pas les distances de la même façon : le mock compte les cases en chebyshev, le moteur compte une diagonale comme 2 cases (`2·min(dx,dy) + |dx−dy|`) → en local, l'IA peut croire à portée (ou hors de portée) d'une cible diagonale que le moteur traiterait autrement | `leekwars_api/rules.py`, `leekwars_api/cell.py` | **écart connu** — le code de l'IA utilise toujours `Cell.distance()` (la métrique du moteur) ; aligner le mock sur le site reste à faire |
+| 28 | La classification des effets d'un item reposait sur le **masque de cibles** : le catalogue du jeu utilise le masque 31 (ENNEMIS\|ALLIES\|CASTER\|…) pour les soins comme pour les attaques → le bandage du joueur était lu comme une attaque et la puce était ignorée (« Ignored (no damage, no buff, no heal, no shield) ») | `libs/analysis_lib.py` | **corrigé** — la classification se fait sur le *type* de l'effet, le masque ne sert plus qu'à savoir à QUI il s'applique (ennemi / soi) |
+| 29 | Le buff de force n'était valorisé que sur le **tour courant** : un buff de plusieurs tours (puce « Protéines », +80-100 force pendant 2 tours) paraissait toujours non rentable (il fait perdre un tir) et n'était jamais joué | `libs/decision_lib.py` | **corrigé** — l'horizon est la durée du buff (`parts["buff_turns"]`), le gain est plafonné par les PV restants de l'ennemi |
+| 30 | Les **cooldowns de puces** n'étaient pas modélisés : l'IA pouvait proposer une puce que le moteur refuse (`Fight.Use.INVALID_COOLDOWN`) et perdre son ouverture de tour | `libs/decision_lib.py`, `leekwars_api/fight.py` | **corrigé** — `Chip.currentCooldown` est lu, les puces en cooldown sont exclues des options ; le mock modélise le cooldown |
+| 31 | Le **mock** touchait le lanceur avec ses propres attaques : le masque 31 du catalogue contient le bit CASTER, et le mock ajoutait le lanceur aux cibles de tout effet | `leekwars_api/fight.py` | **corrigé** — seuls les effets « sur soi » (soin, buff, bouclier) touchent le lanceur (mesuré sur le site : le tir du joueur ne le blesse pas) |
+| 32 | Le **mock** ne rendait pas la stat d'un buff expiré (le +force restait acquis) | `leekwars_api/fight.py` | **corrigé** — les stats buffées sont recalculées à chaque tour depuis les effets actifs |
 
 ---
 

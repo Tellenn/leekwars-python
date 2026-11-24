@@ -74,6 +74,17 @@ class BuildOptionsTest(unittest.TestCase):
         self.assertTrue(buff["is_buff"])
         self.assertFalse(buff["is_heal"])
 
+    def test_a_chip_on_cooldown_is_not_a_usable_option(self):
+        chip = support.protein_chip()
+        chip.currentCooldown = 2
+        self.me.chips.append(chip)
+        usable, options = decision_lib.build_options(self.me)
+
+        self.assertNotIn(chip, [o["obj"] for o in usable])
+        # l'option reste connue (elle est journalisée), mais pas jouable
+        cooling = [o for o in options if o["obj"] is chip][0]
+        self.assertTrue(cooling["on_cooldown"])
+
 
 class OptionScoreTest(unittest.TestCase):
     def setUp(self):

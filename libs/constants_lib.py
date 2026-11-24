@@ -61,4 +61,7 @@ DAMAGE_NAMES = {
     Effect.KILL: "instant kill",
     Effect.LIFE_DAMAGE: "damage (% caster life)",
     Effect.NOVA_DAMAGE: "max HP removal",
+    # Le poison n'est pas modélisé en dégâts (amplifié par la magie, il
+    # ignore les boucliers) : il est au moins signalé dans le journal.
+    Effect.POISON: "poison",
 }
