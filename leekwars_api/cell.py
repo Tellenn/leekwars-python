@@ -4,8 +4,11 @@ Convention Leek Wars :
 
 * une carte est un carré de `size x size` cases ;
 * l'id d'une case vaut `y * size + x` ;
-* la distance se mesure en 8 directions (Chebyshev), règle centralisée dans
-  `leekwars_api.RULES.distance`.
+* le **déplacement** se mesure en 8 directions (Chebyshev), règle
+  centralisée dans `leekwars_api.RULES.distance` ;
+* la **portée** (armes et puces) se mesure en `|dx| + |dy|`, règle
+  centralisée dans `leekwars_api.RULES.range_distance` — c'est la valeur
+  renvoyée par `Cell.distance()` sur le site.
 """
 
 from __future__ import annotations
@@ -105,11 +108,19 @@ class Cell:
     # Distances et chemins
     # ------------------------------------------------------------------
     def distance(self, target) -> int:
-        """Distance en cases (Chebyshev) jusqu'à une case/entité/id."""
+        """Distance **de portée** jusqu'à une case/entité/id (métrique du site).
+
+        C'est la métrique du moteur pour les portées d'armes et de puces :
+        |dx| + |dy| (une diagonale de 2 cases vaut 4). Le déplacement, lui,
+        se mesure en Chebyshev (`RULES.distance`) : une diagonale de 2 cases
+        coûte 2 PM.
+
+        Mesuré sur le site (combat de test #54913368).
+        """
         other = as_cell(target, self.field)
         if other is None:
             return -1
-        return int(RULES.distance(self, other))
+        return int(RULES.range_distance(self, other))
 
     def pathLength(self, target, ignoredCells: Optional[Iterable] = None) -> int:
         """Longueur du plus court chemin, ou -1 si la cible est inatteignable."""

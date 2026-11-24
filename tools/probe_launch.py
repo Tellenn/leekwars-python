@@ -1,16 +1,27 @@
 # @version:3.12
 #
-# SONDE DE DIAGNOSTIC (temporaire) : elle ne joue pas, elle *mesure*.
+# SONDE DE DIAGNOSTIC : elle ne joue pas, elle *mesure*.
 #
 # Objectif : établir la règle réelle du moteur sur les PRÉ-REQUIS de tir :
 #   - la métrique de distance (`Cell.distance()`) ;
 #   - la contrainte de "tir en ligne" (`Item.launchType`) ;
 #   - la portée minimale (`Item.minRange`).
 #
+# Utilisation : ce fichier n'est pas une IA de jeu, c'est une sonde. Pour
+# la lancer sur le site, on la copie temporairement à la place de
+# `Kepo_solo.py` (le moteur n'exécute que le point d'entrée du dossier de
+# l'IA), on pousse, on lance un combat de test, on lit le journal, puis on
+# restaure `Kepo_solo.py`.
+#
 # Protocole : à chaque tour, la sonde se place sur une géométrie connue
 # (même ligne / même colonne / diagonale exacte) par rapport à l'ennemi,
 # puis tente un tir avec l'arme LINE (machine gun) ; elle journalise le
 # code renvoyé par le moteur (1 = OK, -4 = INVALID_POSITION, ...).
+#
+# Résultats obtenus (à l'époque) :
+#   - `Cell.distance()` = |dx| + |dy| (le mock a été aligné dessus) ;
+#   - une arme LINE refuse une cible en diagonale exacte (-4) ;
+#   - une arme LINE touche une cible sur la même ligne ou la même colonne.
 #
 # Aucun import : la sonde n'utilise que les globaux du moteur.
 

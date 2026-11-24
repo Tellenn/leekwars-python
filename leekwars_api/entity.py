@@ -8,6 +8,7 @@ vue, application des effets) vivent dans `fight.py`.
 
 from __future__ import annotations
 
+import math
 from typing import TYPE_CHECKING, Any, Iterable, List, Optional
 
 from .cell import Cell, as_cell
@@ -200,13 +201,16 @@ class Entity:
         return self.side != other.side
 
     def distance(self, target) -> int:
-        """Distance en cases jusqu'à une cellule, une entité ou un id."""
+        """Distance de portée jusqu'à une cellule, une entité ou un id.
+
+        Même métrique que `Cell.distance()` : |dx| + |dy| (cf. `RULES`).
+        """
         if self.cell is None:
             return -1
         other = as_cell(target, self.cell.field)
         if other is None:
             return -1
-        return int(RULES.distance(self.cell, other))
+        return int(RULES.range_distance(self.cell, other))
 
     def stat(self, stat: int) -> float:
         """Valeur d'une caractéristique par sa constante `Entity.Stat.*`."""
@@ -264,8 +268,9 @@ class Me(Entity):
     def moveToward(self, target, mp: Optional[int] = None) -> int:
         """Se rapproche de `target` en dépensant au plus `mp` PM.
 
-        Le déplacement est glouton, en 8 directions, et s'arrête à une case de
-        la cible (on ne peut pas occuper sa case). Renvoie les PM dépensés.
+        Le déplacement est glouton, en 8 directions, et s'arrête sur la
+        case cible (si elle est libre) ou à côté d'elle. Renvoie les PM
+        dépensés.
         """
         fight = self._require_fight()
         destination = as_cell(target, fight.field)
@@ -274,7 +279,7 @@ class Me(Entity):
         budget = min(self.mp if mp is None else int(mp), self.mp)
         spent = 0
         while spent < budget:
-            if RULES.distance(self.cell, destination) <= 1:
+            if self.cell is destination:
                 break
             dx = _sign(destination.x - self.cell.x)
             dy = _sign(destination.y - self.cell.y)
@@ -350,8 +355,45 @@ class Me(Entity):
         return self.moveTowardCells(entities, mp)
 
     def moveTowardLine(self, a, b, mp: Optional[int] = None) -> int:
-        """Se rapproche d'une ligne (approximation : l'extrémité la plus proche)."""
-        return self.moveTowardCells((a, b), mp)
+        """Se rapproche de la ligne passant par les cases `a` et `b`.
+
+        Le déplacement est *perpendiculaire* à la ligne : on s'en approche
+        sans se déplacer le long d'elle. C'est l'outil pour s'aligner avec
+        une cible (fr/Lasers : « il faut donc s'aligner avec la cible, à
+        l'aide de moveTowardLine »).
+        """
+        fight = self._require_fight()
+        first = as_cell(a, fight.field)
+        second = as_cell(b, fight.field)
+        if first is None or second is None or self.cell is None \
+                or self.isStatic:
+            return 0
+        budget = min(self.mp if mp is None else int(mp), self.mp)
+        spent = 0
+        current = _line_distance(self.cell, first, second)
+        while spent < budget:
+            best: Optional[Cell] = None
+            best_distance = current
+            for step_x in (-1, 0, 1):
+                for step_y in (-1, 0, 1):
+                    if step_x == 0 and step_y == 0:
+                        continue
+                    candidate = fight.field.get_cell(
+                        self.cell.x + step_x, self.cell.y + step_y
+                    )
+                    if candidate is None or not candidate.empty:
+                        continue
+                    distance = _line_distance(candidate, first, second)
+                    if distance < best_distance:
+                        best_distance = distance
+                        best = candidate
+            if best is None:
+                break
+            fight.field.move_entity(self, best)
+            current = best_distance
+            spent += 1
+        self.mp -= spent
+        return spent
 
     def moveAwayFromCells(self, cells: Iterable, mp: Optional[int] = None) -> int:
         """S'éloigne de la cellule la plus proche d'une liste."""
@@ -577,6 +619,21 @@ def _sign(value: int) -> int:
     if value < 0:
         return -1
     return 0
+
+
+def _line_distance(point, a, b) -> float:
+    """Distance perpendiculaire d'une case à la ligne passant par a et b.
+
+    Si `a` et `b` sont la même case, on prend sa rangée (ligne
+    horizontale) comme référence.
+    """
+    dx = b.x - a.x
+    dy = b.y - a.y
+    length = math.hypot(dx, dy)
+    if length == 0:
+        return abs(point.y - a.y)
+    cross = dx * (point.y - a.y) - dy * (point.x - a.x)
+    return abs(cross) / length
 
 
 __all__ = ["Entity", "Me", "Leek"]

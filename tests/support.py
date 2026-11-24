@@ -102,6 +102,53 @@ def rifle(range_=2, damage=RIFLE_DAMAGE, cost=3):
     )
 
 
+def line_weapon(range_=6, damage=10, cost=1, name="machine_gun"):
+    """Arme « en ligne » (`Item.launchType = LINE`).
+
+    fr/Armes : la machine gun « ne peut tirer qu'en ligne » : la cible
+    doit être sur la même ligne ou la même colonne que le tireur.
+    """
+    weapon = builder.weapon(
+        name,
+        cost=cost,
+        min_range=0,
+        max_range=range_,
+        features=[
+            builder.feature(
+                builder.Effect.DAMAGE,
+                builder.Effect.Target.ENEMIES,
+                damage,
+                damage,
+            )
+        ],
+    )
+    weapon.launchType = 1  # LAUNCH_TYPE_LINE
+    return weapon
+
+
+def diagonal_weapon(range_=6, damage=10, cost=1, name="bazooka"):
+    """Arme « en diagonale » (`Item.launchType = DIAGONAL`).
+
+    fr/Armes : la bazooka « ne marche qu'en diagonale ».
+    """
+    weapon = builder.weapon(
+        name,
+        cost=cost,
+        min_range=0,
+        max_range=range_,
+        features=[
+            builder.feature(
+                builder.Effect.DAMAGE,
+                builder.Effect.Target.ENEMIES,
+                damage,
+                damage,
+            )
+        ],
+    )
+    weapon.launchType = 2  # LAUNCH_TYPE_DIAGONAL
+    return weapon
+
+
 def heal_chip(amount=HEAL_AMOUNT, cost=2):
     """Puce de soin : effet HEAL sur le lanceur (amplifié par la sagesse)."""
     return builder.chip(

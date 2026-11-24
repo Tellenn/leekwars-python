@@ -44,6 +44,33 @@ class _LaunchType:
     ALL = 8
 
 
+def launch_ok(item, from_cell, target_cell) -> bool:
+    """Le tir de `item` peut-il partir de `from_cell` vers `target_cell` ?
+
+    Traduit la contrainte de visée du jeu (`Item.launchType`) :
+
+    - `LINE` : « ne peut tirer qu'en ligne » → la cible doit être sur la
+      même ligne ou la même colonne que le tireur (encyclopédie fr/Armes :
+      la machine gun « ne peut tirer qu'en ligne », le laser « ne
+      s'utilise qu'en ligne ») ;
+    - `DIAGONAL` : la cible doit être sur une diagonale (la bazooka ne
+      tire « qu'en diagonale ») ;
+    - `CIRCLE` et consorts : aucune contrainte d'alignement.
+
+    Mesuré sur le moteur (combat de test #54913377) : une cible en
+    diagonale exacte (dx = dy = 2) fait refuser le tir d'une arme LINE
+    (INVALID_POSITION), alors qu'une cible sur la même ligne est touchée.
+    """
+    launch = getattr(item, "launchType", _LaunchType.CIRCLE)
+    dx = target_cell.x - from_cell.x
+    dy = target_cell.y - from_cell.y
+    if launch == _LaunchType.LINE:
+        return dx == 0 or dy == 0
+    if launch == _LaunchType.DIAGONAL:
+        return abs(dx) == abs(dy) and dx != 0
+    return True
+
+
 #: Rayon (en cases) associé à chaque forme de zone.
 _AREA_RADIUS: Dict[int, int] = {
     _Area.SINGLE_CELL: 0,
@@ -269,6 +296,7 @@ __all__ = [
     "Weapon",
     "Chip",
     "Feature",
+    "launch_ok",
     "register_item",
     "clear_registry",
 ]

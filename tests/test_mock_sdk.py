@@ -444,13 +444,23 @@ class CellTest(MockSdkTestCase):
         install(fight)
         return fight
 
-    def test_distance_is_chebyshev(self):
+    def test_distance_uses_the_range_metric_of_the_site(self):
+        # Le site mesure la distance de portée en |dx| + |dy| (une
+        # diagonale de 2 cases vaut 4), et non en Chebyshev (2) :
+        # mesuré sur le moteur (combat de test #54913368).
         fight = self._fight()
         enemy = fight.getNearestEnemy()
         diagonal = fight.field.cellFromXY(2, 2)
         self.assertEqual(fight.me.cell.distance(enemy.cell), 2)
-        self.assertEqual(fight.me.cell.distance(diagonal), 2)
+        self.assertEqual(fight.me.cell.distance(diagonal), 4)
         self.assertEqual(fight.me.distance(enemy), 2)
+
+    def test_cell_distance_is_the_movement_metric(self):
+        # Le déplacement, lui, se mesure en Chebyshev (8 directions) :
+        # une diagonale de 2 cases coûte 2 PM.
+        fight = self._fight()
+        diagonal = fight.field.cellFromXY(2, 2)
+        self.assertEqual(fight.field.cellDistance(fight.me.cell, diagonal), 2)
 
     def test_line_of_sight_is_blocked_by_an_obstacle_only(self):
         fight = self._fight()
@@ -823,6 +833,56 @@ class UsageRulesTest(MockSdkTestCase):
 
         self.assertEqual(result, FightClass.Use.INVALID_POSITION)
         self.assertEqual(fight.me.tp, tp_before)
+
+    def test_the_range_uses_the_metric_of_the_site(self):
+        # Le site mesure la portée en |dx| + |dy| : une cible en diagonale
+        # (2, 2) est à 4 cases, pas 2 (mesuré sur le moteur, combat de
+        # test #54913368).
+        weapon = damage_weapon(10, cost=1, max_range=3)
+        fight = self._fight_with_weapon(weapon, enemy_cell=(2, 2))
+        enemy = fight.getNearestEnemy()
+
+        result = fight.me.useWeapon(enemy)
+
+        self.assertEqual(result, FightClass.Use.INVALID_POSITION)
+
+    def test_a_line_weapon_cannot_shoot_a_diagonal_target(self):
+        # fr/Armes : une arme « en ligne » ne tire que sur sa ligne ou sa
+        # colonne (mesuré sur le moteur, combat de test #54913377).
+        weapon = damage_weapon(10, cost=1, max_range=6)
+        weapon.launchType = 1  # LAUNCH_TYPE_LINE
+        fight = self._fight_with_weapon(weapon, enemy_cell=(2, 2))
+        enemy = fight.getNearestEnemy()
+
+        result = fight.me.useWeapon(enemy)
+
+        self.assertEqual(result, FightClass.Use.INVALID_POSITION)
+        self.assertEqual(enemy.life, 100)
+
+    def test_a_line_weapon_shoots_a_target_on_its_line(self):
+        weapon = damage_weapon(10, cost=1, max_range=6)
+        weapon.launchType = 1  # LAUNCH_TYPE_LINE
+        fight = self._fight_with_weapon(weapon, enemy_cell=(2, 0))
+        enemy = fight.getNearestEnemy()
+
+        result = fight.me.useWeapon(enemy)
+
+        self.assertGreater(result, 0)
+        self.assertLess(enemy.life, 100)
+
+    def test_a_diagonal_weapon_only_shoots_diagonally(self):
+        weapon = damage_weapon(10, cost=1, max_range=6)
+        weapon.launchType = 2  # LAUNCH_TYPE_DIAGONAL
+        fight = self._fight_with_weapon(weapon, enemy_cell=(2, 2))
+        enemy = fight.getNearestEnemy()
+
+        self.assertGreater(fight.me.useWeapon(enemy), 0)
+
+        other = self._fight_with_weapon(weapon, enemy_cell=(2, 0))
+        enemy = other.getNearestEnemy()
+
+        self.assertEqual(other.me.useWeapon(enemy),
+                         FightClass.Use.INVALID_POSITION)
 
     def test_not_enough_tp_is_refused(self):
         weapon = damage_weapon(10, cost=20, max_range=10)

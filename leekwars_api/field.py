@@ -69,16 +69,20 @@ class Field:
     # Géométrie
     # ------------------------------------------------------------------
     def distance(self, a, b) -> int:
-        """Distance en cases (Chebyshev)."""
+        """Distance à vol d'oiseau (métrique des portées : |dx| + |dy|)."""
+        first = as_cell(a, self)
+        second = as_cell(b, self)
+        if first is None or second is None:
+            return -1
+        return int(RULES.range_distance(first, second))
+
+    def cellDistance(self, a, b) -> int:
+        """Distance en cases (Chebyshev) : la distance de déplacement."""
         first = as_cell(a, self)
         second = as_cell(b, self)
         if first is None or second is None:
             return -1
         return int(RULES.distance(first, second))
-
-    def cellDistance(self, a, b) -> int:
-        """Alias historique de `distance`."""
-        return self.distance(a, b)
 
     def euclideanDistance(self, a, b) -> float:
         """Distance réelle (à vol d'oiseau)."""

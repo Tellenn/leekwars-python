@@ -16,6 +16,11 @@ def equip_starting_weapon(me, enemy):
     # Le classement tient compte du plafond d'utilisations par tour
     # (`Item.maxUses`) : une arme lente (9 PT, 1 tir par tour) est moins
     # Throughput qu'une arme rapide, même si son ratio par tir est meilleur.
+    #
+    # Les armes qui peuvent *toucher* la cible maintenant passent devant :
+    # une arme hors de portée (ou qui ne peut tirer qu'en ligne alors que
+    # la cible n'est pas alignée) ne vaut rien ce tour, même si ses
+    # dégâts sont supérieurs.
     if me.weapon != None:
         return
     if me.tp < 1:
@@ -23,6 +28,7 @@ def equip_starting_weapon(me, enemy):
         return
     best = None
     best_score = 0
+    best_can_hit = False
     for weapon in analysis_lib.defensive_list(me, "weapons"):
         parts = analysis_lib.analyse_equipment(me, weapon)
         if parts["amp_raw"] <= 0 and parts["flat_sub"] <= 0 \
@@ -41,11 +47,22 @@ def equip_starting_weapon(me, enemy):
             continue
         value = d * uses
         spent = 1 + cost * uses
-        if value / spent > best_score:
-            best_score = value / spent
+        score = value / spent
+        # Une arme qui peut toucher la cible est prioritaire (le score ne
+        # sert alors qu'à départager les armes qui peuvent tirer).
+        can_hit = analysis_lib.can_hit(weapon, me, enemy)
+        if can_hit:
+            if not best_can_hit or score > best_score:
+                best = weapon
+                best_score = score
+                best_can_hit = True
+        elif not best_can_hit and score > best_score:
             best = weapon
+            best_score = score
     if best != None:
-        logs_lib.log(f"Start: equipping {best} (best damage/TP ratio, 1 TP)")
+        can_hit = analysis_lib.can_hit(best, me, enemy)
+        reason = "can hit" if can_hit else "best damage/TP ratio"
+        logs_lib.log(f"Start: equipping {best} ({reason}, 1 TP)")
         me.setWeapon(best)
     else:
         logs_lib.log("No weapon available to equip")

@@ -447,5 +447,89 @@ class KitingScenarioTest(unittest.TestCase):
         self.assertTrue(any("moving closer" in line for line in fight.logs))
 
 
+class MultiWeaponScenarioTest(unittest.TestCase):
+    """Scénarios de bout en bout avec deux armes équipées."""
+
+    def test_ai_switches_to_the_long_weapon_and_shoots(self):
+        # Le pistolet (portée 1) ne peut pas toucher la cible (à 4 cases) :
+        # l'IA doit prendre le fusil (portée 5) et tirer.
+        pistol = support.pistol(range_=1, damage=10, cost=1)
+        rifle = support.rifle(range_=5, damage=30, cost=3)
+        fight = support.make_fight(
+            me=builder.entity(
+                life=100, max_life=100, tp=10, max_tp=10, mp=10, max_mp=10,
+                cell=(0, 0),
+                weapons=[pistol, rifle],
+            ),
+            enemies=[builder.entity(life=100, max_life=100, cell=(4, 0))],
+        )
+        ai = support.load_ai(fight)
+        fight.me.setWeapon(pistol)
+
+        ai.turn()
+
+        self.assertIs(fight.me.weapon, rifle)
+        self.assertTrue(any("Switch:" in line for line in fight.logs))
+        self.assertLess(fight.enemies[0].life, 100)
+
+    def test_ai_starts_with_a_weapon_that_can_hit(self):
+        # La machine gun est plus rentable mais ne tire qu'en ligne : on
+        # commence par le pistolet, qui peut toucher la cible.
+        machine_gun = support.line_weapon(range_=6, damage=30, cost=1)
+        pistol = support.pistol(range_=6, damage=10, cost=1)
+        fight = support.make_fight(
+            me=builder.entity(
+                life=100, max_life=100, tp=10, max_tp=10, mp=10, max_mp=10,
+                cell=(0, 0),
+                weapons=[machine_gun, pistol],
+            ),
+            enemies=[builder.entity(life=100, max_life=100, cell=(3, 3))],
+        )
+        ai = support.load_ai(fight)
+
+        ai.turn()
+
+        self.assertIs(fight.me.weapon, pistol)
+        self.assertTrue(any("can hit" in line for line in fight.logs))
+
+    def test_ai_aligns_itself_to_shoot_a_line_weapon(self):
+        # La machine gun « ne peut tirer qu'en ligne » : l'IA doit se
+        # placer sur la ligne de la cible avant de tirer.
+        fight = support.make_fight(
+            me=builder.entity(
+                life=100, max_life=100, tp=10, max_tp=10, mp=10, max_mp=10,
+                cell=(0, 0),
+                weapons=[support.line_weapon(range_=6, damage=30, cost=1)],
+            ),
+            enemies=[builder.entity(life=100, max_life=100, cell=(3, 3))],
+        )
+        ai = support.load_ai(fight)
+
+        ai.turn()
+
+        # l'IA s'est alignée (ou s'est rapprochée) et a tiré
+        self.assertTrue(any("Aligning" in line for line in fight.logs))
+        self.assertLess(fight.enemies[0].life, 100)
+
+    def test_ai_does_not_hide_when_it_could_not_shoot(self):
+        # Se cacher sans avoir tiré garantit qu'on ne pourra plus tirer
+        # du tout : l'IA garde sa position d'attaque.
+        fight = support.make_fight(
+            me=builder.entity(
+                life=100, max_life=100, tp=10, max_tp=10, mp=10, max_mp=10,
+                cell=(0, 0),
+                weapons=[support.pistol(range_=1, damage=10, cost=1)],
+            ),
+            enemies=[builder.entity(life=100, max_life=100, cell=(4, 0),
+                                    weapon=support.pistol(range_=1), max_mp=6)],
+        )
+        ai = support.load_ai(fight)
+        ai.HIDE_AFTER_ATTACK = True
+
+        ai.turn()
+
+        self.assertFalse(any("Hidden after" in line for line in fight.logs))
+
+
 if __name__ == "__main__":
     unittest.main()

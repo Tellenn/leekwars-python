@@ -87,8 +87,11 @@ def turn():
     if not did_hit:
         decision_lib.prep_buff(me, enemy)
 
-    # Finally, optionally try to break line of sight with the enemy.
-    if HIDE_AFTER_ATTACK:
+    # Enfin, on peut tenter de casser la ligne de vue — mais seulement si
+    # on a réellement tiré : se cacher sans avoir rien fait garantit
+    # qu'on ne pourra plus tirer du tout (le décor nous sépare de la
+    # cible, et le plan de placement ne nous rapprochera pas).
+    if HIDE_AFTER_ATTACK and did_hit:
         decision_lib.hide(me, enemy)
 
     # Mémorise nos PV : la différence avec le tour suivant mesurera les

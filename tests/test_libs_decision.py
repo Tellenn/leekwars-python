@@ -455,6 +455,160 @@ class EquipmentChoiceTest(unittest.TestCase):
         self.assertIs(fight.me.weapon, slow_but_repeatable)
 
 
+class MultiWeaponTest(unittest.TestCase):
+    """Multi-arme : changer d'arme selon ce qui peut toucher la cible."""
+
+    def setUp(self):
+        decision_lib.reset_state()
+
+    def tearDown(self):
+        decision_lib.reset_state()
+
+    def _fight(self, weapons, enemy_cell=(3, 0), tp=10, equipped=None):
+        fight = support.make_fight(
+            me=builder.entity(
+                life=100, max_life=100, tp=tp, max_tp=tp, mp=10, max_mp=10,
+                cell=(0, 0), weapons=weapons,
+            ),
+            enemies=[builder.entity(life=500, max_life=500, cell=enemy_cell)],
+        )
+        install(fight)
+        if equipped is not None:
+            fight.me.setWeapon(equipped)
+        return fight
+
+    def test_ai_switches_to_the_weapon_that_can_reach_the_enemy(self):
+        # L'arme en main (pistolet, portée 1) ne peut pas toucher la
+        # cible (à 3 cases) : l'IA doit prendre le fusil (portée 5).
+        pistol = support.pistol(range_=1, damage=10, cost=1)
+        rifle = support.rifle(range_=5, damage=30, cost=3)
+        fight = self._fight([pistol, rifle], enemy_cell=(3, 0))
+        fight.me.setWeapon(pistol)
+
+        decision_lib.attack(fight.me, fight.enemies[0])
+
+        self.assertIs(fight.me.weapon, rifle)
+        self.assertTrue(any("Switch: rifle" in line for line in fight.logs))
+        self.assertLess(fight.enemies[0].life, 500)
+
+    def test_ai_keeps_its_weapon_when_the_other_one_cannot_hit(self):
+        # Le fusil est plus puissant mais hors de portée (portée 2, cible
+        # à 5 cases) : l'IA garde le pistolet, elle ne change pas d'arme
+        # pour rien.
+        pistol = support.pistol(range_=6, damage=10, cost=1)
+        rifle = support.rifle(range_=2, damage=30, cost=3)
+        fight = self._fight([pistol, rifle], enemy_cell=(5, 0))
+        fight.me.setWeapon(pistol)
+
+        decision_lib.attack(fight.me, fight.enemies[0])
+
+        self.assertIs(fight.me.weapon, pistol)
+        self.assertFalse(any("Switch:" in line for line in fight.logs))
+
+    def test_ai_does_not_shoot_a_line_weapon_when_not_aligned(self):
+        # La machine gun « ne peut tirer qu'en ligne » : la cible est en
+        # diagonale, l'IA ne doit pas gaspiller de PT sur un tir refusé.
+        machine_gun = support.line_weapon(range_=6, damage=30, cost=1)
+        fight = self._fight([machine_gun], enemy_cell=(2, 2))
+        fight.me.setWeapon(machine_gun)
+
+        decision_lib.attack(fight.me, fight.enemies[0])
+
+        self.assertFalse(any("Shot #" in line for line in fight.logs))
+        self.assertEqual(fight.enemies[0].life, 500)
+
+    def test_ai_shoots_a_line_weapon_when_aligned(self):
+        machine_gun = support.line_weapon(range_=6, damage=30, cost=1)
+        fight = self._fight([machine_gun], enemy_cell=(3, 0))
+        fight.me.setWeapon(machine_gun)
+
+        decision_lib.attack(fight.me, fight.enemies[0])
+
+        self.assertTrue(any("Shot #0" in line for line in fight.logs))
+        self.assertLess(fight.enemies[0].life, 500)
+
+    def test_switching_back_costs_one_tp_again(self):
+        # Après un changement d'arme, l'arme précédente doit coûter 1 PT
+        # pour être ré-équipée (sinon l'IA croit changer gratuitement et
+        # gaspille ses PT).
+        pistol = support.pistol(range_=5, damage=5, cost=1)
+        rifle = builder.weapon(
+            "rifle", cost=3, min_range=0, max_range=5, max_uses=1,
+            features=[builder.feature(
+                Effect.DAMAGE, Effect.Target.ENEMIES, 30, 30)],
+        )
+        fight = self._fight([pistol, rifle], enemy_cell=(3, 0))
+        fight.me.setWeapon(pistol)
+
+        decision_lib.attack(fight.me, fight.enemies[0])
+
+        # 1 PT (équiper le fusil) + 3 PT (un tir) + 1 PT (reprendre le
+        # pistolet) + 5 PT (cinq tirs) : les 10 PT sont consommés.
+        self.assertEqual(fight.me.tp, 0)
+        self.assertEqual(
+            len([line for line in fight.logs if "Switch:" in line]), 2)
+
+    def test_refresh_switch_flags_marks_the_other_weapons_as_to_equip(self):
+        pistol = support.pistol(range_=1, damage=10, cost=1)
+        rifle = support.rifle(range_=5, damage=30, cost=3)
+        fight = self._fight([pistol, rifle], enemy_cell=(3, 0))
+        fight.me.setWeapon(pistol)
+        usable, options = decision_lib.build_options(fight.me)
+
+        fight.me.setWeapon(rifle)
+        decision_lib.refresh_switch_flags(options, fight.me)
+
+        pistol_option = [o for o in options if o["obj"] is pistol][0]
+        rifle_option = [o for o in options if o["obj"] is rifle][0]
+        self.assertEqual(rifle_option["switch"], 0)   # en main
+        self.assertEqual(pistol_option["switch"], 1)  # à ré-équiper
+
+    def test_ai_does_not_shoot_with_the_wrong_weapon_when_the_switch_fails(self):
+        # Le changement d'arme est refusé (pas assez de PT) : l'IA ne doit
+        # pas tirer avec l'arme qu'elle a en main en croyant changer.
+        pistol = support.pistol(range_=1, damage=10, cost=1)
+        rifle = support.rifle(range_=5, damage=30, cost=3)
+        fight = self._fight([pistol, rifle], enemy_cell=(3, 0), tp=10)
+        fight.me.setWeapon(pistol)
+        usable, options = decision_lib.build_options(fight.me)
+        rifle_option = [o for o in options if o["obj"] is rifle][0]
+        fight.me.tp = 0  # plus aucun PT : le changement sera refusé
+
+        was_attack, code = decision_lib.execute(
+            fight.me, rifle_option, fight.enemies[0], 0, options)
+
+        self.assertTrue(was_attack)
+        self.assertLess(code, 0)
+        self.assertTrue(any("Switch: rifle: refused" in line
+                            for line in fight.logs))
+        self.assertIs(fight.me.weapon, pistol)
+
+    def test_starting_weapon_is_one_that_can_hit(self):
+        # La machine gun est plus rentable en dégâts/PT mais elle ne peut
+        # tirer qu'en ligne : on commence par le pistolet, qui peut
+        # toucher la cible.
+        machine_gun = support.line_weapon(range_=6, damage=30, cost=1)
+        pistol = support.pistol(range_=6, damage=10, cost=1)
+        fight = self._fight([machine_gun, pistol], enemy_cell=(2, 2))
+
+        equipment_lib.equip_starting_weapon(fight.me, fight.enemies[0])
+
+        self.assertIs(fight.me.weapon, pistol)
+
+    def test_ai_moves_to_align_with_a_line_weapon(self):
+        # La cible est en diagonale : l'IA doit se placer sur sa ligne
+        # plutôt que de tirer dans le vide.
+        machine_gun = support.line_weapon(range_=6, damage=30, cost=1)
+        fight = self._fight([machine_gun], enemy_cell=(3, 3))
+
+        decision_lib.approach(fight.me, fight.enemies[0])
+
+        self.assertTrue(any("Aligning" in line for line in fight.logs))
+        me = fight.me
+        enemy = fight.enemies[0]
+        self.assertTrue(me.cell.onSameLine(enemy.cell))
+
+
 class ChainedOptionsTest(unittest.TestCase):
     """Enchaînement : arme plafonnée, changement d'arme, puce, puis plus rien."""
 

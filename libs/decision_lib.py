@@ -197,13 +197,28 @@ def build_options(me):
     return usable, options
 
 
+def refresh_switch_flags(options, me):
+    """Recalcule le coût de changement d'arme après un changement.
+
+    Une arme coûte 1 PT à équiper (`setWeapon`), sauf celle qu'on a déjà
+    en main. Après un changement, les autres armes redeviennent donc « à
+    équiper » : sans cette mise à jour, l'IA croirait pouvoir changer
+    d'arme gratuitement (et tirerait avec l'arme en main en croyant
+    tirer avec l'autre).
+    """
+    for o in options:
+        if o["kind"] != "weapon":
+            continue
+        o["switch"] = 0 if me.weapon is o["obj"] else 1
+
+
 def best_attack_now(me, usable, enemy, require_range=True):
     # Best attackable option right now, used as the reference to estimate
     # the value of buffs. Returns None if no attack is usable.
     #
-    # `require_range` = False : on ignore la portée (l'ennemi est hors de
-    # portée, on veut quand même savoir quel serait notre arme de
-    # référence pour valoriser un buff).
+    # `require_range` = False : on ignore les pré-requis de tir (l'ennemi
+    # est hors de portée, on veut quand même savoir quel serait notre
+    # arme de référence pour valoriser un buff).
     best = None
     best_score = 0
     for o in usable:
@@ -211,7 +226,7 @@ def best_attack_now(me, usable, enemy, require_range=True):
             continue
         if o["kind"] == "chip" and o["used"]:
             continue
-        if require_range and not analysis_lib.in_range(o["obj"], me, enemy):
+        if require_range and not analysis_lib.can_hit(o["obj"], me, enemy):
             continue
         value, score, uses = attack_value(me, o, enemy)
         if score > best_score:
@@ -620,7 +635,7 @@ def option_score(me, o, usable, enemy):
     elif o["is_buff"]:
         value = buff_value(me, o, best_attack_now(me, usable, enemy), enemy)
     else:
-        if not analysis_lib.in_range(o["obj"], me, enemy):
+        if not analysis_lib.can_hit(o["obj"], me, enemy):
             return 0, 0
         # Dégâts attendus + vol de vie (les dégâts dépendant de la force
         # soignent aussi le lanceur : fr/Sagesse), multipliés par le
@@ -712,6 +727,14 @@ def use_code_name(code):
     return f"code {code}"
 
 
+def _not_enough_tp():
+    # Code `Fight.Use.NOT_ENOUGH_TP` (le moteur refuse l'action).
+    use = getattr(Fight, "Use", None)
+    if use is not None:
+        return getattr(use, "NOT_ENOUGH_TP", -2)
+    return -2
+
+
 def drop_option(o):
     # L'option est inutilisable pour ce tour : on neutralise ses dégâts.
     o["parts"]["amp_raw"] = 0
@@ -720,7 +743,7 @@ def drop_option(o):
     o["parts"]["kill"] = False
 
 
-def execute(me, o, enemy, shot):
+def execute(me, o, enemy, shot, options=None):
     # Performs the chosen action.
     # Returns (was_attack, code) where `code` is the engine's return code
     # (negative = action refused).
@@ -730,9 +753,17 @@ def execute(me, o, enemy, shot):
     # viserait la case du lanceur et ne toucherait personne).
     if o["kind"] == "weapon":
         if o["switch"] > 0:
+            if not me.setWeapon(o["obj"]):
+                # Le moteur refuse le changement d'arme (PT insuffisants,
+                # arme absente de l'inventaire) : on ne tire PAS avec
+                # l'arme que nous avons en main, on neutralise l'option.
+                logs_lib.log(f"Switch: {o['obj']}: refused (not enough TP)")
+                return True, _not_enough_tp()
             logs_lib.log(f"Switch: {o['obj']} (1 TP included in the score)")
-            me.setWeapon(o["obj"])  # costs 1 TP
             o["switch"] = 0
+            if options is not None:
+                # Les autres armes redeviennent « à équiper » (1 PT).
+                refresh_switch_flags(options, me)
         code = me.useWeapon(enemy)
         return True, code
     life_before = me.life
@@ -806,7 +837,7 @@ def attack(me, enemy):
         # boucliers), hors vol de vie (le vol de vie est un soin, pas
         # des dégâts : le comparer aux dégâts réels fausserait l'écart).
         expected = analysis_lib.expected_damage(best["parts"], enemy, me)
-        was_attack, code = execute(me, best, enemy, shot)
+        was_attack, code = execute(me, best, enemy, shot, all_options)
 
         if was_attack:
             damage_dealt = life_before - enemy.life
@@ -838,18 +869,124 @@ def attack(me, enemy):
     return did_hit
 
 
+def firing_blocker(me, usable, enemy):
+    """Pourquoi ne peut-on pas toucher l'ennemi avec nos armes ?
+
+    Renvoie (raison, option) :
+      - raison None : une arme peut toucher la cible, rien à corriger ;
+      - 'far'   : la cible est au-delà de la portée maximale ;
+      - 'close' : la cible est en deçà de la portée minimale ;
+      - 'los'   : la ligne de vue est coupée ;
+      - 'align' : la contrainte de visée (« en ligne ») n'est pas remplie.
+
+    Les blocages « corrigeables » (alignement, ligne de vue) sont
+    prioritaires : la distance est alors déjà bonne, il suffit de se
+    déplacer un peu.
+    """
+    candidates = []
+    for o in usable:
+        if not o["has_damage"] or o["kind"] != "weapon":
+            continue
+        block = analysis_lib.blocked_by(o["obj"], me, enemy)
+        if block is None:
+            return None, o
+        candidates.append((o, block))
+    if not candidates:
+        return None, None
+    for o, block in candidates:
+        if block == "align" or block == "los":
+            return block, o
+    # Aucune arme ne peut tirer : on prend la plus rentable et on corrige
+    # la distance (trop loin / trop près).
+    best = max(candidates, key=lambda c: attack_value(me, c[0], enemy)[0])[0]
+    block = analysis_lib.blocked_by(best["obj"], me, enemy)
+    if block == "range":
+        distance = me.cell.distance(enemy.cell)
+        if distance < best["obj"].minRange:
+            block = "close"
+        else:
+            block = "far"
+    return block, best
+
+
+def _cell_from(xy, fallback=None):
+    """Case du terrain à partir d'un couple (x, y), ou None."""
+    if xy == None:
+        return None
+    try:
+        return Field.cellFromXY(xy[0], xy[1])
+    except Exception:
+        return fallback
+
+
+def align_move(me, enemy, weapon):
+    """Se place sur la ligne de visée de l'arme (« ne tire qu'en ligne »).
+
+    On s'aligne sur la rangée ou la colonne de l'ennemi (la plus proche),
+    sans bouger le long de cette ligne : c'est exactement ce que fait
+    `moveTowardLine` (fr/Lasers : « il faut donc s'aligner avec la cible,
+    à l'aide de moveTowardLine »).
+    """
+    dx = abs(enemy.cell.x - me.cell.x)
+    dy = abs(enemy.cell.y - me.cell.y)
+    if dy <= dx:
+        # La rangée de l'ennemi : la ligne passe par lui et par la case
+        # voisine en x.
+        other = _cell_from((enemy.cell.x + 1, enemy.cell.y))
+        if other is None:
+            other = _cell_from((enemy.cell.x - 1, enemy.cell.y))
+    else:
+        # La colonne de l'ennemi.
+        other = _cell_from((enemy.cell.x, enemy.cell.y + 1))
+        if other is None:
+            other = _cell_from((enemy.cell.x, enemy.cell.y - 1))
+    if other is None:
+        me.moveToward(enemy)
+        return
+    logs_lib.log(f"Aligning: enemy at ({enemy.cell.x},{enemy.cell.y}), "
+                 f"distance {me.cell.distance(enemy.cell)} "
+                 f"(range {getattr(weapon, 'minRange', 0)}-"
+                 f"{getattr(weapon, 'maxRange', 0)}) -> moving onto its line")
+    me.moveTowardLine(enemy.cell, other, me.mp)
+
+
 def approach(me, enemy):
     """Se positionne quand aucune attaque n'a été possible.
 
-    Deux comportements :
-      - 1c1 et ma portée domine celle de l'ennemi : on se place hors de
-        sa portée (même APRÈS son déplacement), pour garder l'initiative
-        (on touche au tour suivant, lui ne peut pas nous toucher) ;
-      - sinon : on se rapproche simplement (comportement historique).
-
-    Dans les deux cas le rapport est écrit : la distance visée et la
-    distance obtenue (le terrain peut empêcher d'y arriver).
+    On part du blocage (voir `firing_blocker`) :
+      - « close » : l'ennemi est plus près que la portée minimale de nos
+        armes → on recule jusqu'à la case de tir ;
+      - « align » : la distance est bonne mais l'arme ne tire qu'en
+        ligne → on s'aligne avec l'ennemi ;
+      - « los » : la ligne de vue est coupée → on se rapproche ;
+      - « far » : l'ennemi est hors de portée → on se rapproche de la
+        case de tir (plan de kiting si l'on peut rester hors de sa
+        portée).
     """
+    usable, options = build_options(me)
+    reason, option = firing_blocker(me, usable, enemy)
+    weapon = option["obj"] if option is not None else None
+
+    if reason == "align":
+        align_move(me, enemy, weapon)
+        return
+    if reason == "los":
+        logs_lib.log("Line of sight broken -> moving closer")
+        me.moveToward(enemy)
+        return
+    if reason == "close":
+        distance = me.cell.distance(enemy.cell)
+        low = getattr(weapon, "minRange", 0)
+        logs_lib.log(f"Too close: enemy at distance {distance} "
+                     f"(min range {low}) -> backing off")
+        target = _cell_from(threat_lib.firing_cell(me, enemy, weapon, low))
+        if target is None:
+            me.moveAwayFrom(enemy, me.mp)
+        else:
+            me.moveToward(target, me.mp)
+        return
+
+    # « far » (ou rien à corriger) : on va vers la case de tir.
     distance, threat = threat_lib.kite_distance(me, enemy)
     if USE_KITING and distance is not None:
         safe = threat.get("safe", distance)
@@ -858,7 +995,7 @@ def approach(me, enemy):
                      f"my reach {threat_lib.my_reach(me)} "
                      f"-> target distance {distance} (safe {safe})")
         before = me.cell.distance(enemy.cell)
-        spent = threat_lib.apply_kite(me, enemy, distance)
+        spent = threat_lib.apply_kite(me, enemy, distance, weapon)
         after = me.cell.distance(enemy.cell)
         logs_lib.log(f"Position: me ({me.cell.x},{me.cell.y}) enemy "
                      f"({enemy.cell.x},{enemy.cell.y}) | distance "
@@ -869,7 +1006,11 @@ def approach(me, enemy):
                  f"(range {threat['range']} + {threat['move']} MP), "
                  f"my reach {threat_lib.my_reach(me)} "
                  f"-> moving closer and rerunning")
-    me.moveToward(enemy)
+    target = _cell_from(threat_lib.firing_cell(me, enemy, weapon))
+    if target is None:
+        me.moveToward(enemy)
+    else:
+        me.moveToward(target, me.mp)
 
 
 def hide(me, enemy):

@@ -396,6 +396,120 @@ class InRangeTest(unittest.TestCase):
         self.assertFalse(analysis_lib.in_range(weapon, me, enemy))
 
 
+class CanHitTest(unittest.TestCase):
+    """Les trois pré-requis de tir : portée, ligne de vue, alignement."""
+
+    def _fight(self, weapon, enemy_cell=(2, 0)):
+        fight = support.make_fight(
+            me=builder.entity(cell=(0, 0), weapons=[weapon]),
+            enemies=[builder.entity(cell=enemy_cell)],
+        )
+        install(fight)
+        return fight
+
+    def test_a_weapon_in_range_can_hit(self):
+        weapon = support.pistol(range_=3)
+        fight = self._fight(weapon, enemy_cell=(2, 0))
+
+        self.assertTrue(analysis_lib.can_hit(weapon, fight.me,
+                                             fight.enemies[0]))
+
+    def test_a_weapon_out_of_range_cannot_hit(self):
+        weapon = support.pistol(range_=1)
+        fight = self._fight(weapon, enemy_cell=(3, 0))
+
+        self.assertFalse(analysis_lib.can_hit(weapon, fight.me,
+                                              fight.enemies[0]))
+
+    def test_the_minimum_range_is_enforced(self):
+        # Le fusil du jeu ne tire pas à moins de 7 cases (min_range).
+        weapon = builder.weapon(
+            "rifle",
+            cost=7,
+            min_range=7,
+            max_range=9,
+            features=[builder.feature(
+                Effect.DAMAGE, Effect.Target.ENEMIES, 30, 30)],
+        )
+        fight = self._fight(weapon, enemy_cell=(3, 0))
+
+        self.assertFalse(analysis_lib.can_hit(weapon, fight.me,
+                                              fight.enemies[0]))
+        self.assertEqual(analysis_lib.blocked_by(weapon, fight.me,
+                                                fight.enemies[0]), "range")
+
+    def test_an_obstacle_blocks_a_weapon_that_needs_line_of_sight(self):
+        weapon = support.pistol(range_=3)
+        fight = self._fight(weapon, enemy_cell=(2, 0))
+        fight.field.get_cell(1, 0).obstacle = True
+
+        self.assertFalse(analysis_lib.can_hit(weapon, fight.me,
+                                              fight.enemies[0]))
+        self.assertEqual(analysis_lib.blocked_by(weapon, fight.me,
+                                                fight.enemies[0]), "los")
+
+    def test_a_weapon_that_does_not_need_line_of_sight_hits_anyway(self):
+        weapon = builder.weapon(
+            "lance-flammes",
+            cost=1,
+            min_range=0,
+            max_range=3,
+            needs_los=False,
+            features=[builder.feature(
+                Effect.DAMAGE, Effect.Target.ENEMIES, 10, 10)],
+        )
+        fight = self._fight(weapon, enemy_cell=(2, 0))
+        fight.field.get_cell(1, 0).obstacle = True
+
+        self.assertTrue(analysis_lib.can_hit(weapon, fight.me,
+                                             fight.enemies[0]))
+
+    def test_a_line_weapon_cannot_hit_a_diagonal_target(self):
+        # fr/Armes : la machine gun « ne peut tirer qu'en ligne ».
+        # Mesuré sur le moteur (combat #54913377) : une cible en diagonale
+        # exacte fait refuser le tir.
+        weapon = support.line_weapon(range_=6)
+        fight = self._fight(weapon, enemy_cell=(2, 2))
+
+        self.assertFalse(analysis_lib.can_hit(weapon, fight.me,
+                                              fight.enemies[0]))
+        self.assertEqual(analysis_lib.blocked_by(weapon, fight.me,
+                                                fight.enemies[0]), "align")
+
+    def test_a_line_weapon_hits_a_target_on_the_same_row(self):
+        weapon = support.line_weapon(range_=6)
+        fight = self._fight(weapon, enemy_cell=(3, 0))
+
+        self.assertTrue(analysis_lib.can_hit(weapon, fight.me,
+                                             fight.enemies[0]))
+
+    def test_a_line_weapon_hits_a_target_on_the_same_column(self):
+        weapon = support.line_weapon(range_=6)
+        fight = self._fight(weapon, enemy_cell=(0, 3))
+
+        self.assertTrue(analysis_lib.can_hit(weapon, fight.me,
+                                             fight.enemies[0]))
+
+    def test_a_diagonal_weapon_hits_a_diagonal_target_only(self):
+        weapon = support.diagonal_weapon(range_=6)
+        fight = self._fight(weapon, enemy_cell=(2, 2))
+
+        self.assertTrue(analysis_lib.can_hit(weapon, fight.me,
+                                             fight.enemies[0]))
+        row_fight = self._fight(support.diagonal_weapon(range_=6),
+                                enemy_cell=(2, 0))
+
+        self.assertFalse(analysis_lib.can_hit(
+            row_fight.me.weapons[0], row_fight.me, row_fight.enemies[0]))
+
+    def test_blocked_by_returns_none_when_the_shot_is_possible(self):
+        weapon = support.pistol(range_=3)
+        fight = self._fight(weapon, enemy_cell=(2, 0))
+
+        self.assertIsNone(analysis_lib.blocked_by(weapon, fight.me,
+                                                  fight.enemies[0]))
+
+
 class ConstantsTest(unittest.TestCase):
     def test_science_amplified_covers_every_science_buff(self):
         # fr/Effets : BUFF_STRENGTH, BUFF_AGILITY, BUFF_RESISTANCE,

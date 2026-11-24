@@ -14,6 +14,7 @@ from libs.constants_lib import (
     INSTANT_KILL, STRENGTH_BUFFS, POWER_BUFFS, TP_BUFFS, MP_BUFFS,
     HEAL_TYPES, RAW_HEAL_TYPES, SCIENCE_AMPLIFIED, CRITICAL_FACTOR,
     RELATIVE_SHIELD_TYPES, ABSOLUTE_SHIELD_TYPES, SHIELD_AMPLIFIED,
+    LAUNCH_TYPE_LINE, LAUNCH_TYPE_DIAGONAL, LAUNCH_TYPE_CIRCLE,
 )
 
 # Shape of the parsed effects ("parts" dict), consumed by expected_* :
@@ -288,9 +289,11 @@ def in_range(obj, me, target):
     # tir que le moteur refuse (ligne de vue coupée).
     #
     # La distance est celle de l'API (`Cell.distance()`) : c'est la
-    # métrique du moteur pour le contrôle de portée (une diagonale y
-    # compte 2 cases) — mesuré en combat de test #54912618 : le fusil
-    # (portée 7) est accepté à distance 7, la puce (portée 5) refusée.
+    # métrique du moteur pour le contrôle de portée (|dx| + |dy| : une
+    # diagonale y compte 2 cases) — mesuré en combat de test #54912618 :
+    # le fusil (portée 7) est accepté à distance 7, la puce (portée 5)
+    # refusée ; et #54913368 : deux cases décalées de (19, -6) sont à 25
+    # cases de distance.
     d = me.cell.distance(target.cell)
     if d < obj.minRange or d > obj.maxRange:
         return False
@@ -298,3 +301,52 @@ def in_range(obj, me, target):
         if not me.cell.lineOfSight(target.cell):
             return False
     return True
+
+
+def aligned(obj, me, target):
+    # Contrainte de visée de l'objet (`Item.launchType`) : certaines armes
+    # « ne peuvent tirer qu'en ligne » (fr/Armes). Sans cette vérification,
+    # l'IA propose un tir que le moteur refuse (INVALID_POSITION).
+    #
+    #   LINE     : même ligne ou même colonne que le tireur
+    #              (machine gun, fusil à pompe, gazeur, lasers...)
+    #   DIAGONAL : sur une diagonale (neutrino, bazooka)
+    #   autres    : pas de contrainte d'alignement modélisée (hypothèse)
+    launch = getattr(obj, "launchType", LAUNCH_TYPE_CIRCLE)
+    if launch == LAUNCH_TYPE_LINE:
+        return me.cell.onSameLine(target.cell)
+    if launch == LAUNCH_TYPE_DIAGONAL:
+        dx = abs(target.cell.x - me.cell.x)
+        dy = abs(target.cell.y - me.cell.y)
+        return dx == dy and dx > 0
+    return True
+
+
+def can_hit(obj, me, target):
+    # Peut-on toucher la cible avec cet objet, ici et maintenant ?
+    #
+    # Les trois pré-requis du jeu :
+    #   1. la portée (minRange <= distance <= maxRange) ;
+    #   2. la ligne de vue, si l'objet l'exige (`Item.needsLos`) ;
+    #   3. la contrainte de visée (`Item.launchType` : « en ligne »...).
+    #
+    # C'est le filtre utilisé pour choisir l'arme du tour : une arme qui
+    # ne peut pas toucher la cible ne vaut rien, même si ses dégâts sont
+    # supérieurs.
+    if not in_range(obj, me, target):
+        return False
+    return aligned(obj, me, target)
+
+
+def blocked_by(obj, me, target):
+    # Pourquoi ne peut-on pas toucher la cible avec cet objet ?
+    # ('range', 'los', 'align' ou None si le tir est possible)
+    d = me.cell.distance(target.cell)
+    if d < obj.minRange or d > obj.maxRange:
+        return "range"
+    if getattr(obj, "needsLos", True) \
+            and not me.cell.lineOfSight(target.cell):
+        return "los"
+    if not aligned(obj, me, target):
+        return "align"
+    return None

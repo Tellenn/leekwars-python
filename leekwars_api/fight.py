@@ -14,7 +14,7 @@ from .cell import Cell, as_cell
 from .effect import Effect, is_self_effect
 from .entity import Entity, Me
 from .field import Field
-from .items import Chip, Feature, Item, Weapon
+from .items import Chip, Feature, Item, Weapon, launch_ok
 from .rules import RULES
 
 
@@ -375,10 +375,12 @@ class Fight:
         """Cases d'où `item` peut atteindre `target_cell`."""
         if from_cell is None:
             return []
-        distance = RULES.distance(from_cell, target_cell)
+        distance = RULES.range_distance(from_cell, target_cell)
         if distance < item.minRange or distance > item.maxRange:
             return []
         if item.needsLos and not from_cell.lineOfSight(target_cell):
+            return []
+        if not launch_ok(item, from_cell, target_cell):
             return []
         return [from_cell]
 
@@ -582,11 +584,14 @@ class Fight:
                 and item.currentCooldown > 0:
             # Puce en cooldown : le moteur la refuse.
             return _Use.INVALID_COOLDOWN
-        # Hors portée ou ligne de vue coupée : position invalide (code -4).
-        distance = RULES.distance(user.cell, target_cell)
+        # Hors portée, ligne de vue coupée ou visée impossible : position
+        # invalide (code -4).
+        distance = RULES.range_distance(user.cell, target_cell)
         if distance < item.minRange or distance > item.maxRange:
             return _Use.INVALID_POSITION
         if item.needsLos and not user.cell.lineOfSight(target_cell):
+            return _Use.INVALID_POSITION
+        if not launch_ok(item, user.cell, target_cell):
             return _Use.INVALID_POSITION
         return _Use.SUCCESS
 

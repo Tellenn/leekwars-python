@@ -86,16 +86,18 @@ elle est calculée sur les dégâts réellement subis.
 `distance(target)`, `pathLength(target)`, `lineOfSight(target)`,
 `path(target)`, `onSameLine(target)`, `Cell.get(id)`.
 
-**Distance** : chebyshev (`max(|dx|, |dy|)`). Centralisée dans une constante
-`leekwars_api.RULES.distance` pour être modifiable.
+**Deux métriques**, comme sur le site :
 
-**Écart avec le site** : le moteur compte la portée avec `Cell.distance()` où
-**une diagonale vaut 2 cases** (`2·min(dx,dy) + |dx−dy|`) — mesuré en combat
-de test #54912618 : le fusil (portée 7) est accepté à distance 7, la puce
-(portée 5) est refusée au même endroit. Le mock reste en chebyshev : en local,
-l'IA peut donc croire à portée (ou hors de portée) d'une cible diagonale que
-le moteur traiterait autrement. Le code de l'IA utilise toujours
-`Cell.distance()` (la métrique du moteur), jamais une distance recalculée.
+- `Cell.distance()` (et `Field.distance`) : la **distance de portée**,
+  `|dx| + |dy|` — une diagonale de 2 cases vaut 4. C'est la métrique du
+  moteur pour les portées d'armes et de puces (mesuré en combat de test
+  #54912618 : le fusil (portée 7) est accepté à distance 7, la puce
+  (portée 5) est refusée au même endroit ; et #54913368 : deux cases
+  décalées de (19, -6) sont à 25 cases). Constante :
+  `leekwars_api.RULES.range_distance`.
+- `Field.cellDistance()` et le déplacement : chebyshev
+  (`max(|dx|, |dy|)`) — une diagonale de 2 cases coûte 2 PM. Constante :
+  `leekwars_api.RULES.distance`.
 
 **Line of sight** : approximated (pas d'obstacle par défaut → `True` ;
 `obstacle=True` sur une case bloque). Les entités ne bloquent pas la vue.
@@ -104,6 +106,13 @@ le moteur traiterait autrement. Le code de l'IA utilise toujours
 
 `Item` : `id`, `cost`, `minRange`, `maxRange`, `name`, `area`, `launchType`,
 `maxUses`, `inline`, `needsLos`, `failure`, `features`.
+
+**Contrainte de visée** (`Item.launchType`, valeurs du site) : `LINE` = 1
+(la cible doit être sur la même ligne ou la même colonne que le tireur),
+`DIAGONAL` = 2 (la cible doit être en diagonale), `CIRCLE` = 7 (aucune
+contrainte). Le mock refuse un tir qui ne respecte pas la contrainte
+(`INVALID_POSITION`) — mesuré sur le moteur (combat de test #54913377 : une
+cible en diagonale exacte fait refuser le tir d'une arme `LINE`).
 `Weapon`/`Chip` : + `Weapon.get(id)`, `Weapon.getAll()`, `Weapon.isWeapon(v)`,
 `Chip.get(id)`, `Chip.getAll()`, `Chip.isChip(v)`.
 `Feature` : `type`, `minValue`, `maxValue`, `turns`, `targets`, `modifiers`,
@@ -184,7 +193,8 @@ valident la même arithmétique que le serveur :
 | Science | amplifie `BUFF_STRENGTH`, `BUFF_AGILITY`, `BUFF_RESISTANCE`, `BUFF_WISDOM`, `BUFF_TP`, `BUFF_MP` (les variantes `RAW_*` ne sont **pas** amplifiées) |
 | Vol de vie | `SoinsParVolDeVie = DegatsFinaux * Sagesse / 1000` (seulement dégâts dépendant de la Force) |
 | Coûts | `useWeapon`/`useChip` coûtent `item.cost` PT ; `setWeapon` coûte 1 PT ; 1 PM par case déplacée |
-| Portée | `minRange <= cell.distance(cible) <= maxRange` |
+| Portée | `minRange <= cell.distance(cible) <= maxRange` (distance de portée : `|dx| + |dy|`) |
+| Visée | la cible doit respecter `Item.launchType` (`LINE` : même ligne ou colonne ; `DIAGONAL` : diagonale) |
 | Ligne de vue | vérifiée si `item.needs_los` |
 
 Jet de valeur : `rng.randint(minValue, maxValue)` (le jeu tire au sort dans

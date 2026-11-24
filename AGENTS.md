@@ -147,10 +147,16 @@ Flux d'un tour (`ai.turn()`) :
    itération (les PV, les PT et les boucliers changent), on exécute la
    meilleure (attaque / soin / buff / bouclier), on mesure les dégâts
    réels vs attendus.
-5. Si rien n'était à portée : `decision_lib.approach()` — en 1c1 on se
-   place hors de la zone de menace de l'ennemi (`threat_lib.kite_distance()`),
-   sinon on se rapproche (`me.moveToward(enemy)`) ; puis on rejoue le
-   calcul (la rentabilité change avec la distance).
+5. Si rien n'était à portée : `decision_lib.approach()` — le plan dépend
+   de ce qui bloque (`decision_lib.firing_blocker()`) :
+   - **trop près** (portée minimale) : on recule jusqu'à la case de tir ;
+   - **pas aligné** (arme « en ligne ») : on se place sur la ligne de la
+     cible (`moveTowardLine`) ;
+   - **ligne de vue coupée** : on se rapproche ;
+   - **trop loin** : on se rapproche de la case de tir ; en 1c1 on se
+     place hors de la zone de menace de l'ennemi
+     (`threat_lib.kite_distance()`), sinon on se rapproche simplement ;
+   puis on rejoue le calcul (la rentabilité change avec la distance).
 6. Si on n'a toujours pas pu tirer : `decision_lib.prep_buff()` — buff
    « un tour avant » (les PT sont inutilisés, le tour suivant sera
    amplifié) s'il bat l'attente de l'ouverture du tour suivant.
@@ -177,6 +183,32 @@ Mécanique : `libs/logs_lib.log_once(clé, message)` n'écrit qu'une fois par
 combat (réarmé automatiquement quand le compteur de tours repart de zéro ;
 `logs_lib.reset()` le force dans les tests). Le nom affiché vient de
 `libs/logs_lib.AI_NAME` — à aligner avec le nom du fichier d'entrée.
+
+### Pré-requis de tir (multi-arme)
+
+Une arme ne vaut que si elle peut **toucher** la cible maintenant
+(`analysis_lib.can_hit()`) :
+
+1. **la portée** : `minRange <= Cell.distance() <= maxRange` — la distance
+   du moteur est `|dx| + |dy|` (une diagonale de 2 cases vaut 4) ;
+2. **la ligne de vue** : seulement si l'objet l'exige (`Item.needsLos`) ;
+3. **la contrainte de visée** (`Item.launchType`) : une arme `LINE` ne
+   tire que sur sa ligne ou sa colonne, une arme `DIAGONAL` qu'en
+   diagonale.
+
+Le choix de l'arme du tour suit ces règles :
+
+- chaque arme équipée est une option (`decision_lib.build_options()`) ;
+  l'arme en main ne coûte rien, les autres coûtent **1 PT**
+  (`setWeapon`) ;
+- une option hors de portée / non alignée vaut **0** : on ne propose
+  jamais un tir que le moteur refusera ;
+- le score est `valeur / PT` (le changement d'arme est inclus dans le
+  ratio) ;
+- après un changement d'arme, le coût des autres armes est remis à jour
+  (`refresh_switch_flags()`) — les ré-équiper coûte de nouveau 1 PT ;
+- si le moteur refuse le changement d'arme, l'IA **ne tire pas** avec
+  l'arme qu'elle a en main (`decision_lib.execute()`).
 
 **Échelle de décision** : tout est comparé en `valeur / PT`
 (le coût d'équipement d'une arme — 1 PT — est inclus dans le ratio) :
@@ -295,7 +327,8 @@ Récapitulatif de l'API Python : **`docs/leekwars-api-python.md`**.
 | Durée d'un buff | un buff de N tours agit pendant le tour où il est joué **et les N-1 tours suivants** (il disparaît au début du N-ième tour suivant) ; les effets perdent 1 tour au début du tour de leur lanceur | fr/Effets (« un boost de N tours disparaît au début du N-ième tour suivant de son lanceur ») |
 | Érosion | les dégâts subis réduisent la **vie maximum** : 5 % des dégâts classiques, 10 % du poison, +10 % sur un coup critique ; les boucliers atténuent l'érosion | `docs/encyclopedia/erosion.md` |
 | Ligne de vue | `Item.needsLos` : la plupart des armes l'exigent, 11 puces du catalogue frappent sans (trébuchet, étincelle, repiquage, picquant…) | `docs/leekwars-api-python.md` + données du jeu (`weapon/get-all`, `chip/get-all`) |
-| Distance | le moteur compte la portée avec `Cell.distance()` : **une diagonale vaut 2 cases** (`2·min(dx,dy) + |dx−dy|`) — c'est la métrique à utiliser pour toute comparaison de portée | mesuré sur le moteur (combat de test #54912618 : le fusil, portée 7, est accepté à distance 7 ; la puce, portée 5, est refusée) — **le mock utilise le chebyshev** : écart connu (cf. §8, #27) |
+| Contrainte de visée | `Item.launchType` : `LINE` = 1 (« ne peut tirer qu'en ligne » → la cible doit être sur la même **ligne ou colonne** que le tireur), `DIAGONAL` = 2 (cible en diagonale), `CIRCLE` = 7 (aucune contrainte) | fr/Armes (« la machine gun ne peut tirer qu'en ligne », « la bazooka ne marche qu'en diagonale ») + mesuré sur le moteur (combat #54913377 : une cible en diagonale exacte fait refuser le tir d'une arme LINE) |
+| Distance | le moteur compte la portée avec `Cell.distance()` : **|dx| + |dy|** (une diagonale de 2 cases vaut 4) — c'est la métrique à utiliser pour toute comparaison de portée | mesuré sur le moteur (combat de test #54912618 : le fusil, portée 7, est accepté à distance 7 ; la puce, portée 5, est refusée ; combat #54913368 : deux cases décalées de (19, -6) sont à 25 cases) — le **mock est aligné** sur cette métrique (cf. §8, #27) |
 
 ---
 
@@ -385,7 +418,7 @@ dans `scenarios/duel.json`).
 | 24 | L'IA ne modélisait pas la **portée de l'ennemi** : elle se rapprochait toujours (`moveToward`), donc elle entrait dans sa portée et le laissait tirer en premier | `libs/threat_lib.py`, `libs/decision_lib.py` | **corrigé** (`threat_lib` : zone de menace = portée de l'arme ennemie + ses PM ; `decision_lib.approach()` se place hors de cette zone en 1c1 quand notre portée domine la sienne) |
 | 25 | La **fuite de fin de tour** partait même quand l'ennemi ne pouvait pas nous atteindre : elle jetait nos PM et annulait le positionnement « kiting » | `libs/decision_lib.py` | **corrigé** (`hide()` saute la fuite si l'ennemi est hors de sa zone de menace) |
 | 26 | Hypothèses du modèle de menace : PM de l'ennemi = `maxMP` (remis à zéro à chaque tour), ligne de vue non modélisée, puces offensives ennemies prises en compte (hypothèse prudente) | `libs/threat_lib.py` | hypothèses assumées — à confronter à un combat de test |
-| 27 | Le **mock** et le site ne mesurent pas les distances de la même façon : le mock compte les cases en chebyshev, le moteur compte une diagonale comme 2 cases (`2·min(dx,dy) + |dx−dy|`) → en local, l'IA peut croire à portée (ou hors de portée) d'une cible diagonale que le moteur traiterait autrement | `leekwars_api/rules.py`, `leekwars_api/cell.py` | **écart connu** — le code de l'IA utilise toujours `Cell.distance()` (la métrique du moteur) ; aligner le mock sur le site reste à faire |
+| 27 | Le **mock** et le site ne mesurent pas les distances de la même façon : le mock compte les cases en chebyshev, le moteur compte une diagonale comme 2 cases (`2·min(dx,dy) + |dx−dy|`) → en local, l'IA peut croire à portée (ou hors de portée) d'une cible diagonale que le moteur traiterait autrement | `leekwars_api/rules.py`, `leekwars_api/cell.py` | **corrigé** — `Cell.distance()` (et `Field.distance`) utilisent la métrique du moteur (`|dx| + |dy|`, `RULES.range_distance`) ; le déplacement reste en chebyshev (`RULES.distance`, `Field.cellDistance`) — mesuré sur le moteur (combat #54913368) |
 | 28 | La classification des effets d'un item reposait sur le **masque de cibles** : le catalogue du jeu utilise le masque 31 (ENNEMIS\|ALLIES\|CASTER\|…) pour les soins comme pour les attaques → le bandage du joueur était lu comme une attaque et la puce était ignorée (« Ignored (no damage, no buff, no heal, no shield) ») | `libs/analysis_lib.py` | **corrigé** — la classification se fait sur le *type* de l'effet, le masque ne sert plus qu'à savoir à QUI il s'applique (ennemi / soi) |
 | 29 | Le buff de force n'était valorisé que sur le **tour courant** : un buff de plusieurs tours (puce « Protéines », +80-100 force pendant 2 tours) paraissait toujours non rentable (il fait perdre un tir) et n'était jamais joué | `libs/decision_lib.py` | **corrigé** — l'horizon est la durée du buff (`parts["buff_turns"]`), le gain est plafonné par les PV restants de l'ennemi |
 | 30 | Les **cooldowns de puces** n'étaient pas modélisés : l'IA pouvait proposer une puce que le moteur refuse (`Fight.Use.INVALID_COOLDOWN`) et perdre son ouverture de tour | `libs/decision_lib.py`, `leekwars_api/fight.py` | **corrigé** — `Chip.currentCooldown` est lu, les puces en cooldown sont exclues des options ; le mock modélise le cooldown |
@@ -397,6 +430,10 @@ dans `scenarios/duel.json`).
 | 36 | Hypothèses du plan de buffs : (a) le buff agit immédiatement et couvre le tour où il est joué **et** les N-1 tours suivants ; (b) au tour suivant on rejoue avec la même arme, les PT pleins et le compteur d'utilisations remis à zéro ; (c) l'ennemi se rapproche de `maxMP` cases par tour (modèle de menace) pour décider si un buff « un tour avant » sera utilisé ; (d) la puissance ajoute des dégâts plats par tir (hypothèse déjà assumée, cf. #8) | `libs/decision_lib.py` | hypothèses assumées — à confronter à un combat de test |
 | 37 | Le buff de **PM** (`buff_mp`) n'est pas valorisé (il ne sert qu'au repositionnement) ; le buff de TP est valorisé comme des PT supplémentaires (tirs en plus) | `libs/decision_lib.py` | **partiel** (TP corrigé, PM à faire) |
 | 38 | Le **plan de rapprochement** ne tient pas compte de la **ligne de vue** : `approach()` vise l'ennemi tout droit. Sur le combat de test #54913316, les deux poireaux (notre IA contre elle-même) sont restés 13 tours sans pouvoir tirer (ligne de vue coupée par le décor) : le rapprochement bute sur le mur et le combat dégénère en plants | `libs/decision_lib.py`, `libs/threat_lib.py` | **écart connu** — un plan de repositionnement « contourner l'obstacle » (ou au moins s'écarter quand la ligne de vue est coupée) reste à faire ; le mock n'a pas de décor, il ne peut pas le mettre en défaut |
+| 39 | La **contrainte de visée** (`Item.launchType`) n'était pas modélisée : l'IA proposait des tirs que le moteur refusait (`INVALID_POSITION`) — la machine gun, le fusil à pompe, le gazeur et les lasers « ne peuvent tirer qu'en ligne », la bazooka et le neutrino « ne marchent qu'en diagonale » | `libs/analysis_lib.py`, `libs/threat_lib.py` | **corrigé** — `analysis_lib.can_hit()` (portée + ligne de vue + alignement) filtre les armes utilisables, `decision_lib.firing_blocker()` dit ce qui bloque, `decision_lib.align_move()` se place sur la ligne de la cible (`moveTowardLine`) ; mesuré sur le moteur (combat #54913377) |
+| 40 | Le **coût du changement d'arme** n'était pas remis à jour après un `setWeapon` : l'IA croyait pouvoir ré-équiper gratuitement l'arme précédente (et aurait tiré avec l'arme en main en croyant tirer avec l'autre) | `libs/decision_lib.py` | **corrigé** — `refresh_switch_flags()` recalcule le coût (1 PT) de chaque arme après un changement ; `execute()` vérifie le retour de `setWeapon` et refuse de tirer si le changement est refusé |
+| 41 | L'IA **se cachait même quand elle n'avait pas tiré** : en coupant la ligne de vue de la cible, elle s'interdisait tout tir ultérieur (combat #54913368 : 64 tours sans un seul tir) | `Kepo_solo.py`, `libs/decision_lib.py` | **corrigé** — la fuite (`HIDE_AFTER_ATTACK`) n'a lieu que si l'IA a réellement tiré |
+| 42 | Le **plan de placement** ignorait la portée minimale et l'alignement : l'IA se parquait à une distance où aucune de ses armes ne pouvait toucher la cible, et ne cherchait pas à s'aligner | `libs/threat_lib.py`, `libs/decision_lib.py` | **corrigé** — fenêtres de tir par arme (`my_windows`), distance de tir (`firing_distance`), case de tir (`firing_cell`) ; reculer si l'ennemi est trop près, s'aligner sinon |
 
 ---
 

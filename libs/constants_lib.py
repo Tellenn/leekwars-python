@@ -55,6 +55,23 @@ SCIENCE_AMPLIFIED = [
     Effect.BUFF_WISDOM, Effect.BUFF_TP, Effect.BUFF_MP,
 ]
 
+# --- Contraintes de visée (`Item.launchType`) ---
+# fr/Armes : « Tout comme les puces, les armes sont sujettes à des
+# restrictions de tir » (fonction `getWeaponLaunchType`).
+#   LINE      : « ne peut tirer qu'en ligne » → la cible doit être sur la
+#               même ligne ou la même colonne que le tireur (machine gun,
+#               fusil à pompe, gazeur, lasers...). Mesuré sur le moteur
+#               (combat de test #54913377) : une cible en diagonale
+#               exacte fait refuser le tir (INVALID_POSITION).
+#   DIAGONAL  : la cible doit être sur une diagonale (neutrino, bazooka :
+#               « il ne marche qu'en diagonale »).
+#   STAR      : contrainte d'alignement non modélisée (hypothèse : aucune).
+#   CIRCLE    : aucune contrainte d'alignement (pistolet, magnum, fusil).
+LAUNCH_TYPE_LINE = 1
+LAUNCH_TYPE_DIAGONAL = 2
+LAUNCH_TYPE_STAR = 3
+LAUNCH_TYPE_CIRCLE = 7
+
 # Damage types eligible for logging labels
 DAMAGE_NAMES = {
     Effect.DAMAGE: "damage",

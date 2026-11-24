@@ -34,6 +34,13 @@ import libs.analysis_lib as analysis_lib  # type: ignore
 # Pyright fix: re-read the module as "Any" (see IMPORT NOTE in Kepo_solo.py)
 analysis_lib = globals()["analysis_lib"]
 
+#: Contraintes de visée (`Item.launchType`) : reprises de
+#: `libs/constants_lib.py` (le module est relu comme "Any", on évite donc
+#: un import croisé).
+LAUNCH_TYPE_LINE = 1
+LAUNCH_TYPE_DIAGONAL = 2
+LAUNCH_TYPE_CIRCLE = 7
+
 #: Marge de sécurité : on sort de la zone de menace d'une case, pour ne
 #: pas être à la limite (et pour que le tir adverse soit refusé).
 SAFETY_MARGIN = 1
@@ -50,6 +57,26 @@ def item_range(item):
     return max(0, getattr(item, "maxRange", 0) or 0)
 
 
+def item_min_range(item):
+    # Portée offensive minimale d'un item (0 si inconnue).
+    return max(0, getattr(item, "minRange", 0) or 0)
+
+
+def offensive_items(entity):
+    # Les objets offensifs de l'entité (arme + puces offensives).
+    items = []
+    weapon = getattr(entity, "weapon", None)
+    if weapon is not None:
+        parts = analysis_lib.analyse_equipment(entity, weapon)
+        if is_offensive(parts):
+            items.append(weapon)
+    for chip in analysis_lib.defensive_list(entity, "chips"):
+        parts = analysis_lib.analyse_equipment(entity, chip)
+        if is_offensive(parts):
+            items.append(chip)
+    return items
+
+
 def enemy_threat(enemy):
     """Décrit ce que l'ennemi peut nous faire subir.
 
@@ -59,6 +86,11 @@ def enemy_threat(enemy):
         chips  : portée des puces offensives
         move   : PM dont l'ennemi dispose pour se déplacer
         reach  : rayon de menace (portée + déplacement)
+        min    : distance minimale à laquelle l'ennemi peut nous toucher
+                 (la portée minimale de son arme : le fusil, par exemple,
+                 ne tire pas à moins de 7 cases)
+        windows : fenêtres de menace (min, max + déplacement) : on peut
+                  nous toucher si on est dans l'une d'elles
     """
     weapon = getattr(enemy, "weapon", None)
     weapon_range = item_range(weapon) if weapon is not None else 0
@@ -69,12 +101,17 @@ def enemy_threat(enemy):
             chip_range = max(chip_range, item_range(chip))
     move = max(0, getattr(enemy, "maxMP", 0) or 0)
     offensive = max(weapon_range, chip_range)
+    windows = []
+    for item in offensive_items(enemy):
+        windows.append((item_min_range(item), item_range(item) + move))
     return {
         "range": offensive,
         "weapon": weapon_range,
         "chips": chip_range,
         "move": move,
         "reach": offensive + move,
+        "min": min([w[0] for w in windows]) if windows else 0,
+        "windows": windows,
     }
 
 
@@ -106,8 +143,110 @@ def my_reach(me):
     return best
 
 
+def my_windows(me):
+    """Fenêtres de portée des armes offensives abordables : [(min, max)].
+
+    Une arme ne peut toucher la cible que dans sa fenêtre : le fusil, par
+    exemple, ne tire qu'entre 7 et 9 cases (portée minimale). Ce sont ces
+    fenêtres qui décident de la distance à laquelle on se place.
+    """
+    windows = []
+    for weapon in analysis_lib.defensive_list(me, "weapons"):
+        parts = analysis_lib.analyse_equipment(me, weapon)
+        if not is_offensive(parts):
+            continue
+        cost = getattr(weapon, "cost", 0)
+        switch = 0 if me.weapon is weapon else 1
+        if cost + switch > me.tp:
+            continue  # hors de budget ce tour
+        windows.append((item_min_range(weapon), item_range(weapon)))
+    return windows
+
+
+def firing_distance(windows, wanted):
+    """La distance à laquelle se placer pour pouvoir réellement tirer.
+
+    On cherche une distance qui appartienne à une fenêtre de tir et qui
+    soit la plus proche de `wanted` (la distance « idéale », en général
+    juste hors de la portée de l'ennemi). Si aucune distance n'est
+    acceptable, on prend le bord de fenêtre le plus proche : mieux vaut
+    tirer de trop près ou de trop loin que pas tirer du tout.
+    """
+    if not windows:
+        return None
+    for lo, hi in windows:
+        if lo <= wanted <= hi:
+            return wanted
+    best = None
+    for lo, hi in windows:
+        for candidate in (lo, hi):
+            if best is None or abs(candidate - wanted) < abs(best - wanted):
+                best = candidate
+    return best
+
+
+def _sign(value):
+    if value > 0:
+        return 1
+    if value < 0:
+        return -1
+    return 0
+
+
+def firing_cell(me, enemy, weapon, distance=None):
+    """Case (x, y) depuis laquelle on peut toucher l'ennemi avec `weapon`.
+
+    Elle est :
+      - à `distance` cases de l'ennemi (métrique de portée, |dx| + |dy|),
+        distance recadrée dans la fenêtre de tir de l'arme ;
+      - alignée selon la contrainte de visée de l'arme (`launchType`) :
+        sur la rangée ou la colonne de l'ennemi pour une arme « en
+        ligne », en diagonale pour une arme « en diagonale » ;
+      - du côté où nous sommes déjà (on ne traverse pas l'ennemi).
+    """
+    if weapon is None:
+        return None
+    if distance is None:
+        distance = me.cell.distance(enemy.cell)
+    low = max(0, getattr(weapon, "minRange", 0) or 0)
+    high = max(0, getattr(weapon, "maxRange", 0) or 0)
+    if distance < low:
+        distance = low
+    elif distance > high:
+        distance = high
+    dir_x = _sign(me.cell.x - enemy.cell.x)
+    dir_y = _sign(me.cell.y - enemy.cell.y)
+    launch = getattr(weapon, "launchType", LAUNCH_TYPE_CIRCLE)
+    if launch == LAUNCH_TYPE_DIAGONAL:
+        # « en diagonale » : |dx| = |dy|, donc une distance paire.
+        step = distance // 2
+        return (enemy.cell.x + dir_x * step, enemy.cell.y + dir_y * step)
+    # La distance de portée est |dx| + |dy| : on la met sur un seul axe,
+    # ce qui place la case sur la rangée ou la colonne de l'ennemi (donc
+    # alignée pour une arme « en ligne »).
+    candidates = []
+    if dir_x != 0:
+        candidates.append((enemy.cell.x + dir_x * distance, enemy.cell.y))
+    if dir_y != 0:
+        candidates.append((enemy.cell.x, enemy.cell.y + dir_y * distance))
+    if not candidates:
+        return (enemy.cell.x, enemy.cell.y)
+    best = candidates[0]
+    best_travel = abs(best[0] - me.cell.x) + abs(best[1] - me.cell.y)
+    for candidate in candidates[1:]:
+        travel = abs(candidate[0] - me.cell.x) + abs(candidate[1] - me.cell.y)
+        if travel < best_travel:
+            best = candidate
+            best_travel = travel
+    return best
+
+
 def in_reach(enemy, me):
-    """L'ennemi peut-il nous atteindre (même après son déplacement) ?"""
+    """L'ennemi peut-il nous atteindre (même après son déplacement) ?
+
+    Rayon de menace : sa portée + ses PM (hypothèse conservatrice : le
+    déplacement est compté en cases de portée).
+    """
     threat = enemy_threat(enemy)
     distance = me.cell.distance(enemy.cell)
     return distance <= threat["reach"]
@@ -146,11 +285,22 @@ def kite_distance(me, enemy):
     # ... mais on ne se parque jamais hors de notre propre portée : sinon
     # on ne tire plus et le combat finit en match nul si l'adversaire ne
     # bouge pas. Dans ce cas, on engage.
-    return min(safe, reach), threat
+    # La distance visée doit en plus appartenir à une fenêtre de tir réelle
+    # (une arme à portée minimale ne tire pas de près).
+    wanted = min(safe, reach)
+    distance = firing_distance(my_windows(me), wanted)
+    if distance is None:
+        return wanted, threat
+    return distance, threat
 
 
-def apply_kite(me, enemy, target_distance):
-    """Déplace `me` vers la distance cible (dans la limite des PM).
+def apply_kite(me, enemy, target_distance, weapon=None):
+    """Déplace `me` vers la case de tir (dans la limite des PM).
+
+    On vise la case de tir (à `target_distance` de l'ennemi, alignée
+    selon l'arme) plutôt que l'ennemi lui-même : la distance de portée
+    (|dx| + |dy|) n'est pas la distance de déplacement, et un pas en
+    diagonale la fait varier de 2.
 
     Renvoie le nombre de PM dépensés.
     """
@@ -158,12 +308,21 @@ def apply_kite(me, enemy, target_distance):
     current = me.cell.distance(enemy.cell)
     if current == target_distance:
         return 0
+    target = firing_cell(me, enemy, weapon, target_distance)
+    cell = None
+    if target is not None:
+        try:
+            cell = Field.cellFromXY(target[0], target[1])
+        except Exception:
+            cell = None
+    if cell is not None:
+        me.moveToward(cell, me.mp)
+        return before - me.mp
+    # Repli : on se rapproche ou on s'éloigne de l'ennemi.
     if current > target_distance:
-        # Trop loin : on se rapproche (sans jamais entrer dans sa zone).
         steps = min(me.mp, current - target_distance)
         me.moveToward(enemy, steps)
     else:
-        # Trop près : on se replie hors de sa portée.
         steps = min(me.mp, target_distance - current)
         me.moveAwayFrom(enemy, steps)
     return before - me.mp
