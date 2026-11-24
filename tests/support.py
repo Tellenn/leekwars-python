@@ -2,9 +2,10 @@
 
 Fournit :
   - la mise à disposition de la racine du dépôt dans sys.path (pour
-    `import main` et `import libs.xxx`) ;
-  - `load_main(fight)` : installe le mock puis (re)charge le module `main`,
-    exactement comme le moteur Leek Wars évalue le point d'entrée ;
+    `import Kepo_solo` et `import libs.xxx`) ;
+  - `load_ai(fight)` : installe le mock puis (re)charge le module
+    `Kepo_solo`, exactement comme le moteur Leek Wars évalue le point
+    d'entrée ;
   - des raccourcis de construction de scénario.
 """
 
@@ -39,14 +40,14 @@ HEAL_AMOUNT = 15            # soin brut de la puce de soin
 STRENGTH_BUFF = 20          # buff de force brut
 
 
-def load_main(fight):
-    """Installe le mock du SDK et recharge `main` (son `me` est figé au
+def load_ai(fight):
+    """Installe le mock du SDK et recharge `Kepo_solo` (son `me` est figé au
     niveau module, il faut donc le recharger après chaque changement de
     scénario)."""
     install(fight)
-    main = importlib.import_module("main")
-    importlib.reload(main)
-    return main
+    ai = importlib.import_module("Kepo_solo")
+    importlib.reload(ai)
+    return ai
 
 
 def pistol(range_=1, damage=PISTOL_DAMAGE, cost=1):

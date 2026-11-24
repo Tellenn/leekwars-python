@@ -1,4 +1,4 @@
-"""Tests de bout en bout : `main.turn()` sur des scénarios de combat.
+"""Tests de bout en bout : `ai.turn()` sur des scénarios de combat.
 
 Ces tests vérifient le comportement observable de l'IA (PV, TP, PM,
 journal), pas les détails internes du moteur de décision.
@@ -21,9 +21,9 @@ class TurnScenarioTest(unittest.TestCase):
             ),
             enemies=[builder.entity(life=100, max_life=100, cell=(1, 0))],
         )
-        main = support.load_main(fight)
+        ai = support.load_ai(fight)
 
-        main.turn()
+        ai.turn()
 
         self.assertIsNotNone(fight.me.weapon)
         self.assertLess(fight.enemies[0].life, 100)
@@ -38,9 +38,9 @@ class TurnScenarioTest(unittest.TestCase):
             ),
             enemies=[builder.entity(life=100, max_life=100, cell=(5, 5))],
         )
-        main = support.load_main(fight)
+        ai = support.load_ai(fight)
 
-        main.turn()
+        ai.turn()
 
         # l'IA s'est rapprochée (le journal le confirme), puis a tiré ;
         # elle replie ensuite en fuyant, donc on ne compare pas la distance
@@ -59,9 +59,9 @@ class TurnScenarioTest(unittest.TestCase):
             ),
             enemies=[builder.entity(life=100, max_life=100, cell=(1, 0))],
         )
-        main = support.load_main(fight)
+        ai = support.load_ai(fight)
 
-        main.turn()
+        ai.turn()
 
         # le soin passe en premier (meilleur ratio), l'attaque continue
         # ensuite avec les PT restants
@@ -83,9 +83,9 @@ class TurnScenarioTest(unittest.TestCase):
             ),
             enemies=[builder.entity(life=100, max_life=100, cell=(1, 0))],
         )
-        main = support.load_main(fight)
+        ai = support.load_ai(fight)
 
-        main.turn()
+        ai.turn()
 
         self.assertLess(fight.enemies[0].life, 100)
         self.assertEqual(fight.me.life, 10)
@@ -100,9 +100,9 @@ class TurnScenarioTest(unittest.TestCase):
             ),
             enemies=[builder.entity(life=100, max_life=100, cell=(1, 0))],
         )
-        main = support.load_main(fight)
+        ai = support.load_ai(fight)
 
-        main.turn()
+        ai.turn()
 
         self.assertTrue(any("Profitability report" in line
                             for line in fight.logs))
@@ -117,9 +117,9 @@ class TurnScenarioTest(unittest.TestCase):
             ),
             enemies=[builder.entity(life=100, max_life=100, cell=(1, 0))],
         )
-        main = support.load_main(fight)
+        ai = support.load_ai(fight)
 
-        main.turn()
+        ai.turn()
 
         # La fuite consomme des PM (l'IA s'est déplacée pour casser la vue).
         self.assertLess(fight.me.mp, 10)
@@ -147,14 +147,33 @@ class TurnScenarioTest(unittest.TestCase):
             ),
             enemies=[builder.entity(life=100, max_life=100, cell=(1, 0))],
         )
-        main = support.load_main(fight)
+        ai = support.load_ai(fight)
 
-        main.turn()
+        ai.turn()
 
         # la puce (12 dégâts pour 1 PT) est plus rentable que l'arme
         # (1 dégât pour 3 PT) -> elle est utilisée sur l'ennemi
         self.assertLessEqual(fight.enemies[0].life, 88)
         self.assertTrue(any("Casting chip" in line for line in fight.logs))
+
+    def test_ai_can_stay_in_range_instead_of_fleeing(self):
+        # Kepo_solo est un DPS brut : la fuite de fin de tour est optionnelle
+        # (HIDE_AFTER_ATTACK).
+        fight = support.make_fight(
+            me=builder.entity(
+                life=100, max_life=100, tp=10, max_tp=10, mp=10, max_mp=10,
+                cell=(0, 0),
+                weapons=[support.pistol(damage=10, cost=1)],
+            ),
+            enemies=[builder.entity(life=100, max_life=100, cell=(1, 0))],
+        )
+        ai = support.load_ai(fight)
+        ai.HIDE_AFTER_ATTACK = False
+
+        ai.turn()
+
+        # aucune fuite : les PM sont restés intacts
+        self.assertEqual(fight.me.mp, 10)
 
     def test_turn_without_enemy_is_a_no_op(self):
         fight = support.make_fight(
@@ -165,9 +184,9 @@ class TurnScenarioTest(unittest.TestCase):
             ),
             enemies=[],
         )
-        main = support.load_main(fight)
+        ai = support.load_ai(fight)
 
-        main.turn()
+        ai.turn()
 
         self.assertTrue(any("No enemy" in line for line in fight.logs))
         self.assertEqual(fight.me.tp, 10)

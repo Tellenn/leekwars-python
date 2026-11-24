@@ -1,7 +1,7 @@
 # Contrat du SDK mock Leek Wars (`leekwars_api/`)
 
 Mock **local uniquement**. Il ne doit **jamais** être importé par le code de
-l'IA (`main.py`, `libs/*`) : sur le site, ces modules n'existent pas.
+l'IA (`Kepo_solo.py`, `libs/*`) : sur le site, ces modules n'existent pas.
 
 ## Principe d'injection
 
@@ -14,8 +14,8 @@ from leekwars_api import install
 fight = install(fight)      # lie Fight/Effect/Debug/... dans builtins
 ```
 
-Conséquence : `import main` (ou `importlib.reload(main)`) doit avoir lieu
-**après** `install()`, car `main.py` lit `Fight.me` au niveau module.
+Conséquence : `import Kepo_solo` (ou `importlib.reload(ai)`) doit avoir lieu
+**après** `install()`, car `Kepo_solo.py` lit `Fight.me` au niveau module.
 
 ## API publique
 

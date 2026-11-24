@@ -25,7 +25,7 @@
 		[
 			{
 				"id": 1,
-				"ai": "main.py",
+				"ai": "Kepo_solo.py",
 				"name": "Moissonneur",
 				"type": 1,
 				"farmer": 1,
@@ -47,7 +47,7 @@
 		[
 			{
 				"id": 2,
-				"ai": "main.py",
+				"ai": "Kepo_solo.py",
 				"name": "Adversaire",
 				"type": 1,
 				"farmer": 2,

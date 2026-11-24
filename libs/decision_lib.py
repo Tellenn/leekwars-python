@@ -19,7 +19,7 @@
 import libs.analysis_lib as analysis_lib  # type: ignore
 import libs.logs_lib as logs_lib  # type: ignore
 
-# Pyright fix: re-read the modules as "Any" (see IMPORT NOTE in main.py)
+# Pyright fix: re-read the modules as "Any" (see IMPORT NOTE in Kepo_solo.py)
 analysis_lib = globals()["analysis_lib"]
 logs_lib = globals()["logs_lib"]
 

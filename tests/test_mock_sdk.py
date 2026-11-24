@@ -56,11 +56,11 @@ class MockSdkTestCase(unittest.TestCase):
 
     def setUp(self) -> None:
         uninstall()
-        sys.modules.pop("main", None)
+        sys.modules.pop("Kepo_solo", None)
 
     def tearDown(self) -> None:
         uninstall()
-        sys.modules.pop("main", None)
+        sys.modules.pop("Kepo_solo", None)
 
 
 class EffectConstantsTest(MockSdkTestCase):
@@ -423,8 +423,8 @@ class InstallTest(MockSdkTestCase):
         self.assertTrue(hasattr(builtins, "Debug"))
         self.assertIs(builtins.Field, fight.field)
 
-        main = importlib.import_module("main")
-        self.assertIs(main.me, fight.me)
+        ai = importlib.import_module("Kepo_solo")
+        self.assertIs(ai.me, fight.me)
 
         uninstall()
         self.assertFalse(hasattr(builtins, "Fight"))

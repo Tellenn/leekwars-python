@@ -6,10 +6,10 @@ mock reproduit ce mécanisme en liant les mêmes noms dans `builtins` :
     from leekwars_api import install, builder
     fight = builder.make_fight(me=builder.entity(), enemies=[...])
     install(fight)
-    import main           # main.py lit Fight.me au niveau module
+    import Kepo_solo      # Kepo_solo.py lit Fight.me au niveau module
 
 Ce package est réservé aux tests : il ne doit jamais être importé par le code
-de l'IA (`main.py`, `libs/*`).
+de l'IA (`Kepo_solo.py`, `libs/*`).
 """
 
 from __future__ import annotations

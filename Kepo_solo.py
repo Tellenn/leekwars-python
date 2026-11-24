@@ -1,6 +1,16 @@
 # @version:3.12
 #
-# AI "Shoot and hide" - main file (entry point).
+# IA "Kepo solo" - point d'entrée (entry point).
+#
+# PROFIL DE JEU : DPS BRUT. Le build de Kepo est centré sur la FORCE
+# (dégâts) ; la protection viendra plus tard (résistance / sagesse).
+# Conséquences sur le code :
+#   - le score de décision est dominé par les dégâts attendus
+#     (force + crits - boucliers ennemi) ;
+#   - le soin n'est choisi que si son ratio PV/PT bat le ratio dégâts/PT ;
+#   - les buffs de force sont valorisés (ils multiplient tous les tirs
+#     suivants du tour).
+#
 # Structure follows the encyclopedia fr/Python advice: with turn(), the file
 # body is evaluated once (imports, persistent state), then turn() is run by
 # the engine at every turn.
@@ -16,7 +26,8 @@
 # IMPORT NOTE: the editor's type stubs don't declare the "libs" package, so
 # Pyright flags the import as unresolved and members as unknown. Runtime is
 # unaffected; "# type: ignore" silences these false positives. A local copy of
-# the official stubs is available in stubs/leekwars.pyi for local checking.
+# the official stubs is available in stubs/__builtins__.pyi for local
+# checking.
 #
 # Decision flow per turn:
 #   0. equip a weapon if none held (best damage/TP ratio)
@@ -26,11 +37,18 @@
 #      best damage/TP ratio, as specified; heal is wisdom-amplified and
 #      clamped to missing HP)
 #   3. if nothing was in range, move closer and rerun
-#   4. finally try to break line of sight with the enemy
+#   4. optionally break line of sight (see HIDE_AFTER_ATTACK)
 
 import libs.logs_lib as logs_lib  # type: ignore
 import libs.equipment_lib as equipment_lib  # type: ignore
 import libs.decision_lib as decision_lib  # type: ignore
+
+# Comportement de fin de tour.
+#   True  : on tire puis on fuit (casse la ligne de vue) — comportement
+#           "shoot and hide", utile tant que le build n'a pas de protection.
+#   False : DPS pur — on reste à portée et on garde le tempo offensif.
+# Bascule ici quand le build de Kepo gagne en protection.
+HIDE_AFTER_ATTACK = True
 
 me = Fight.me
 
@@ -54,5 +72,6 @@ def turn():
         me.moveToward(enemy)
         did_hit = decision_lib.attack(me, enemy)
 
-    # Whatever happens, then try to break line of sight
-    decision_lib.hide(me, enemy)
+    # Finally, optionally try to break line of sight with the enemy.
+    if HIDE_AFTER_ATTACK:
+        decision_lib.hide(me, enemy)

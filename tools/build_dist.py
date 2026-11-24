@@ -2,7 +2,7 @@
 """Assemble le dossier à importer dans Leek Wars (dist/leekwars/).
 
 Copie uniquement ce que le moteur exécute :
-    main.py
+    Kepo_solo.py
     libs/__init__.py + libs/*.py
 
 Puis vérifie que le code de l'IA ne dépend d'aucun module local-only
@@ -20,6 +20,9 @@ import sys
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DIST = os.path.join(ROOT, "dist", "leekwars")
+
+#: Point d'entrée de l'IA (le moteur exécute ce fichier de l'IA).
+ENTRY_POINT = "Kepo_solo.py"
 
 # Modules qui n'existent pas sur Leek Wars (local-only).
 FORBIDDEN_IMPORTS = {
@@ -56,7 +59,7 @@ IMPORT_RE = re.compile(
 
 
 def collect_sources():
-    sources = [os.path.join(ROOT, "main.py")]
+    sources = [os.path.join(ROOT, ENTRY_POINT)]
     libs_dir = os.path.join(ROOT, "libs")
     for name in sorted(os.listdir(libs_dir)):
         if name.endswith(".py"):

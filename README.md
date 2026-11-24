@@ -10,7 +10,7 @@ logique de décision en local** grâce à un mock du SDK du jeu.
 
 | Chemin | Rôle |
 |---|---|
-| `main.py` | point d'entrée de l'IA (fonction `turn()`), déployé sur le site |
+| `Kepo_solo.py` | point d'entrée de l'IA (fonction `turn()`), déployé sur le site |
 | `libs/` | logique de jeu (analyse d'équipement, décision, équipement, logs) |
 | `leekwars_api/` | **mock local** du SDK Leek Wars (jamais déployé) |
 | `tests/` | tests `unittest` (zéro dépendance) |
@@ -26,7 +26,7 @@ logique de décision en local** grâce à un mock du SDK du jeu.
 
 ```bash
 make test      # python3 -m unittest discover -s tests -v
-make dist      # dist/leekwars/ : main.py + libs/ à copier dans l'éditeur
+make dist      # dist/leekwars/ : Kepo_solo.py + libs/ à copier dans l'éditeur
 ```
 
 Exemple de test local d'un combat :
@@ -40,8 +40,8 @@ fight = builder.make_fight(
 )
 install(fight)
 
-import main
-main.turn()
+import Kepo_solo
+Kepo_solo.turn()
 print(fight.logs)      # journal de l'IA (Debug.log)
 ```
 

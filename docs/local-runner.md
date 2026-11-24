@@ -27,7 +27,7 @@ vide 17×17, avec une graine fixe → le combat est **rejouable à l'identique**
 # l'IA doit être dans un dossier "ai" : copie le contenu de dist/leekwars/
 cp -r /chemin/vers/leekwars-python/dist/leekwars /tmp/ai
 
-java -jar generator.jar --analyze /tmp/ai/main.py        # vérifie le fichier
+java -jar generator.jar --analyze /tmp/ai/Kepo_solo.py        # vérifie le fichier
 java -jar generator.jar /chemin/vers/scenarios/duel.json  # rejoue le combat
 ```
 
@@ -41,7 +41,7 @@ l'endroit où l'on confronte les **dégâts attendus** (journal de l'IA) aux
 | Champ | Rôle |
 |---|---|
 | `entities[0]` / `entities[1]` | les deux équipes (une entité = un membre d'équipe) |
-| `ai` | chemin du fichier IA **relatif au dossier `/ai`** (`main.py`, ou une autre IA) |
+| `ai` | chemin du fichier IA **relatif au dossier `/ai`** (`Kepo_solo.py`, ou une autre IA) |
 | `weapons` / `chips` | ids d'objets du jeu (voir les données du générateur) |
 | `cell` | id de case de départ |
 | `random_seed` | graine du combat (même graine ⇒ même combat) |

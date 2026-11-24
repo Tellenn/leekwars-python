@@ -12,13 +12,13 @@
 
 | Zone | Dossiers | Déployé sur le site ? |
 |---|---|---|
-| **Code de l'IA** | `main.py`, `libs/` | ✅ oui — c'est ce que le moteur exécute |
+| **Code de l'IA** | `Kepo_solo.py`, `libs/` | ✅ oui — c'est ce que le moteur exécute |
 | **Outillage local** | `leekwars_api/`, `tests/`, `tools/`, `docs/` | ❌ non — local uniquement |
 
 ### Invariants (à ne jamais enfreindre)
 
 1. **Aucun import local-only dans le code de l'IA.**
-   `main.py` et `libs/*` ne doivent jamais importer `leekwars_api`, `pytest`,
+   `Kepo_solo.py` et `libs/*` ne doivent jamais importer `leekwars_api`, `pytest`,
    `unittest`, ni quoi que ce soit d'autre que la stdlib autorisée par le
    bac à sable Leek Wars.
    → `python3 tools/build_dist.py` échoue si la règle est violée.
@@ -30,7 +30,7 @@
 3. **Pas de `print()`** dans le code de l'IA : le journal de combat passe par
    `libs.logs_lib.log()` (→ `Debug.log`). `print()` fonctionne sur le site
    mais n'est pas lisible dans le rapport de fin de combat de la même façon.
-4. **Le point d'entrée reste `main.py` à la racine**, avec une fonction
+4. **Le point d'entrée reste `Kepo_solo.py` à la racine**, avec une fonction
    `turn()`. Le corps du module est évalué **une seule fois** (les variables
    de module persistent d'un tour à l'autre), `turn()` est rejoué à chaque
    tour.
@@ -51,7 +51,7 @@ make test        # python3 -m unittest discover -s tests -v  (zéro dépendance)
 make lint        # ruff check .            (optionnel : pip install -e '.[dev]')
 make typecheck   # pyright                 (optionnel)
 make check       # test + lint + typecheck
-make dist        # assemble dist/leekwars/ (main.py + libs/) pour l'import site
+make dist        # assemble dist/leekwars/ (Kepo_solo.py + libs/) pour l'import site
 make docs-sync   # rafraîchit docs/encyclopedia/ depuis le site Leek Wars
 ```
 
@@ -64,7 +64,7 @@ Aucune installation réseau n'est nécessaire pour `make test`.
 ## 3. Architecture du code de l'IA
 
 ```
-main.py                 point d'entrée : turn() →/logique
+Kepo_solo.py          point d'entrée : turn() →/logique
 libs/constants_lib.py   constantes de jeu (types d'effets, groupes, CRITICAL_FACTOR)
 libs/analysis_lib.py    parsing d'équipement → dégâts/soins/buffs attendus
 libs/decision_lib.py    options possibles, scoring value/TP, exécution du plan
@@ -72,7 +72,25 @@ libs/equipment_lib.py   choix de l'arme de départ
 libs/logs_lib.py        écriture dans le journal de combat (Debug.log)
 ```
 
-Flux d'un tour (`main.turn()`) :
+### Profil de jeu : DPS brut
+
+L'IA de Kepo est un **dps brut** : le build est centré sur la **force**
+(dégâts), la protection viendra plus tard (résistance / sagesse en stats).
+
+Conséquences sur le code :
+
+- le score de décision est dominé par les **dégâts attendus** (force + crits
+  − boucliers ennemi) ;
+- un **soin** n'est choisi que si son ratio `PV/PT` bat le ratio
+  `dégâts/PT` de la meilleure attaque (le soin n'est pas une priorité) ;
+- les **buffs de force** sont valorisés : ils multiplient tous les tirs
+  suivants du tour (`buff_value()`) ;
+- la **fuite de fin de tour** est optionnelle : `HIDE_AFTER_ATTACK` dans
+  `Kepo_solo.py`. `True` = comportement « shoot and hide » (utile tant que
+  le build n'a pas de protection) ; `False` = DPS pur, on garde le tempo
+  offensif. Un test verrouille les deux comportements.
+
+Flux d'un tour (`ai.turn()`) :
 
 1. `Fight.getNearestEnemy()` — pas d'ennemi → sortie.
 2. `equipment_lib.equip_starting_weapon()` — équipe la meilleure arme
@@ -115,13 +133,13 @@ fight = builder.make_fight(
 )
 install(fight)          # -> builtins.Fight, builtins.Effect, ...
 
-import main             # main.py lit Fight.me au niveau module
-main.turn()
+import Kepo_solo        # Kepo_solo.py lit Fight.me au niveau module
+ai.turn()
 ```
 
 Points d'attention :
 
-- `install()` **avant** `import main` (ou `importlib.reload(main)` si le
+- `install()` **avant** `import Kepo_solo` (ou `importlib.reload(ai)` si le
   module a déjà été importé : `me` y est figé au niveau module).
 - Le mock applique les **vraies formules** du jeu (force, crit, boucliers,
   sagesse, science, TP/PM, portées, ligne de vue) : les tests valident la
@@ -155,10 +173,10 @@ class ScenarioTest(unittest.TestCase):
             enemies=[builder.entity(life=20, max_life=20, cell=(1, 0))],
         )
         install(fight)
-        main = importlib.import_module("main")
-        importlib.reload(main)
+        ai = importlib.import_module("Kepo_solo")
+        importlib.reload(ai)
 
-        main.turn()
+        ai.turn()
 
         self.assertEqual(fight.enemies[0].life, 0)
 ```
@@ -204,7 +222,7 @@ Récapitulatif de l'API Python : **`docs/leekwars-api-python.md`**.
   d'entrée : la fonction `turn()`.
 - **Le corps du module est évalué UNE SEULE FOIS** (variables de module
   persistantes), puis **le moteur rejoue `turn()` à chaque tour**. →
-  Ne pas appeler `turn()` à la fin de `main.py` (tir en double au tour 1).
+  Ne pas appeler `turn()` à la fin de `Kepo_solo.py` (tir en double au tour 1).
   Si le module ne définit pas `turn()`, c'est le module entier qui est
   rejoué chaque tour.
 - **Imports** : seuls les fichiers de l'IA sont accessibles ; un module est
@@ -220,12 +238,12 @@ Récapitulatif de l'API Python : **`docs/leekwars-api-python.md`**.
   fichier** et **256 KiB au total** → garder les modules de l'IA petits
   (`make dist` affiche les tailles).
 - **Quotas de l'éditeur** : taille totale et nombre de fichiers de l'IA sont
-  limités → `make dist` ne dépose que `main.py` + `libs/`.
+  limités → `make dist` ne dépose que `Kepo_solo.py` + `libs/`.
 - **Arborescence git** : l'éditeur Leek Wars est un dépôt git (clone, pull,
   push, commit, branches) → le dépôt GitHub peut être importé tel quel.
   Attention : **l'IA doit vivre dans un dossier**, pas à la racine du dépôt
   importé → cloner le dépôt dans un dossier, ou pointer l'IA sur le
-  sous-dossier qui contient `main.py`.
+  sous-dossier qui contient `Kepo_solo.py`.
   `make dist` reste utile pour copier un sous-ensemble à la main.
 - **Multi-langages** : une IA peut être en Python, JS, TS ou LeekScript et
   combattre les IA des autres langages.
@@ -267,18 +285,20 @@ dans `scenarios/duel.json`).
 | 7 | Le vol de vie (sagesse) n'était pas modélisé dans les dégâts attendus | `libs/analysis_lib.py` | **corrigé** (`expected_lifesteal`, ajouté à la valeur d'une attaque) |
 | 8 | `buff_value()` : hypothèse « la puissance ajoute des dégâts plats par tir » (à confirmer en jeu) | `libs/decision_lib.py` | hypothèse assumée |
 | 9 | `expected_damage` n'excluait pas la partie « flat » du multiplicateur force/crit | `libs/analysis_lib.py` | **corrigé** (le multiplicateur force/crit ne s'applique qu'à `amp_raw`) |
-| 10 | `main.py` appelait `turn()` à la fin du module : le moteur rejoue déjà `turn()` chaque tour → tir en double au tour 1 | `main.py` | **corrigé** (appel retiré) — **à confirmer au premier import sur le site** |
-| 11 | `main.py` n'est pas un nom imposé par la plateforme (le moteur exécute le fichier `aiPath` de l'IA) : c'est une convention de ce dépôt | `main.py` | documenté |
+| 10 | `Kepo_solo.py` appelait `turn()` à la fin du module : le moteur rejoue déjà `turn()` chaque tour → tir en double au tour 1 | `Kepo_solo.py` | **corrigé** (appel retiré) — **à confirmer au premier import sur le site** |
+| 11 | `Kepo_solo.py` n'est pas un nom imposé par la plateforme (le moteur exécute le fichier `aiPath` de l'IA) : c'est une convention de ce dépôt | `Kepo_solo.py` | documenté |
 | 12 | `EFFECT_KILL` valait 0 dégât dans le modèle : l'IA ne choisissait jamais une arme d'exécution | `libs/analysis_lib.py` | **corrigé** (`kill` → la valeur vaut les PV restants de la cible) |
 | 13 | Les actions dont le code de retour est négatif (`INVALID_POSITION`, `NOT_ENOUGH_TP`…) ne sont pas distinguées : l'IA suppose que l'action a réussi | `libs/decision_lib.py` | à traiter (l'option est déjà neutralisée après 0 dégât ; le mock expose désormais les codes officiels) |
 | 14 | Le mock n'applique pas le « 5 % du montant retiré » sur les PV maximum (règle du jeu sur les dégâts) | `leekwars_api/fight.py` | écart assumé (sans impact sur les décisions) |
 | 15 | `useChip(chip)` sans cible : une puce à dégâts visait la case du lanceur et ne touchait jamais l'ennemi | `libs/decision_lib.py` | **corrigé** (cible explicite : l'ennemi pour une puce à dégâts, le lanceur sinon) |
+| 16 | Sur un build **force**, le buff de force devrait être lancé **avant** les tirs (il multiplie tous les tirs suivants) ; le scoring actuel le traite comme une option concurrente des attaques, sur un horizon d'un seul tour | `libs/decision_lib.py` | à traiter (hypothèse : tester l'ordre « buff d'abord » sur l'arène) |
+| 17 | La fuite de fin de tour (`HIDE_AFTER_ATTACK`) est activée par défaut : pour un DPS pur, elle coûte du tempo | `Kepo_solo.py` | assumé — à basculer à `False` quand le build aura de la protection |
 
 ---
 
 ## 9. Workflow de livraison
 
-1. Modifier le code de l'IA (`main.py`, `libs/`).
+1. Modifier le code de l'IA (`Kepo_solo.py`, `libs/`).
 2. `make test` — la suite doit passer (aucun test cassé, aucun test
    supprimé pour faire passer).
 3. Si la modification touche une formule : mettre à jour le snapshot
