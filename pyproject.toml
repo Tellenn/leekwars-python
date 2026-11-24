@@ -1,0 +1,38 @@
+[project]
+name = "leekwars-python"
+version = "0.1.0"
+description = "IA Leek Wars en Python : code de l'IA, SDK mock local et tests"
+readme = "README.md"
+requires-python = ">=3.10"
+# Zéro dépendance : le code de l'IA tourne dans le bac à sable Leek Wars
+# (aucun pip possible) et les tests utilisent unittest (stdlib).
+dependencies = []
+
+[project.optional-dependencies]
+# Outillage de confort, non requis pour `make test`.
+dev = [
+    "ruff>=0.6",
+    "pyright>=1.1.380",
+]
+
+[tool.ruff]
+line-length = 88
+target-version = "py310"
+exclude = ["dist", ".venv", "docs"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP", "B"]
+ignore = ["E501"]
+
+[tool.pyright]
+include = ["main.py", "libs", "leekwars_api", "tests"]
+pythonVersion = "3.12"
+typeCheckingMode = "basic"
+reportMissingModuleSource = "warning"
+# Stubs Python officiels de l'API Leek Wars (montés comme "__builtins__.pyi",
+# exactement comme dans l'éditeur) -> Fight, Effect, Weapon... sont résolus.
+stubPath = "stubs"
+# Le code de l'IA utilise des globaux injectés par le moteur Leek Wars
+# (Fight, Effect, Debug, ...) : ils n'existent pas en Python standard.
+# Voir docs/leekwars-api.d.ts (stubs officiels) et le mock leekwars_api/.
+reportUndefinedVariable = "none"
