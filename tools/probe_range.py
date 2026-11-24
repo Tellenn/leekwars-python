@@ -42,19 +42,15 @@ def turn():
     if me.weapon is not pistol:
         me.setWeapon(pistol)
 
-    # On se place à une distance connue : une fois sur la rangée de
-    # l'ennemi, une fois en diagonale (les deux splits de la distance).
+    # Pour isoler la métrique de portée, il faut des tirs dont la ligne
+    # de vue est dégagée : si la vue est coupée, on se rapproche (cela la
+    # rétablit), sinon on s'éloigne pour échantillonner des distances
+    # croissantes (la frontière de portée).
     index = Fight.turn
-    step = 4 + (index % 4)  # 4..7
-    if index % 2 == 0:
-        target_x = enemy.cell.x + step
-        target_y = enemy.cell.y
+    if me.cell.lineOfSight(enemy.cell):
+        me.moveAwayFrom(enemy, me.mp)
     else:
-        target_x = enemy.cell.x + step
-        target_y = enemy.cell.y + step
-    cell = Field.cellFromXY(target_x, target_y)
-    if cell is not None:
-        me.moveToward(cell, me.mp)
+        me.moveToward(enemy, me.mp)
 
     code = me.useWeapon(enemy)
     dx = enemy.cell.x - me.cell.x
