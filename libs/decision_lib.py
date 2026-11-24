@@ -135,6 +135,11 @@ def strength_buff_gain(me, buff_option, reference, enemy):
     #
     # Le buff consomme des PT : il peut repousser un tir. Il ne vaut le coup
     # que si le total avec buff dépasse le total sans buff.
+    #
+    # Horizon : les tirs du tour uniquement. Un buff de force dure souvent
+    # plusieurs tours, donc la vraie valeur est plus haute : la règle est
+    # conservatrice (elle peut refuser un buff qui serait rentable sur la
+    # durée). À revoir si le build devient 'force + buff permanent'.
     attack_cost = reference["cost"] + reference["switch"]
     if attack_cost <= 0:
         return 0
