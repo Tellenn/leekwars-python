@@ -237,6 +237,24 @@ class ShieldAnalysisTest(unittest.TestCase):
         self.assertEqual(parts["buff_strength"], 0)
         self.assertEqual(parts["heal_raw"], 0)
 
+    def test_the_real_helmet_chip_is_parsed_as_an_absolute_shield(self):
+        # Puce « Casque » (id 21 du catalogue) : +15 de bouclier absolu
+        # pendant 2 tours.
+        parts = analysis_lib.analyse_equipment(
+            builder.entity(resistance=0), support.helmet_chip())
+
+        self.assertEqual(parts["shield_absolute"], 15)
+        self.assertEqual(parts["shield_relative"], 0)
+        self.assertEqual(parts["shield_turns"], 2)
+
+    def test_the_helmet_absolute_shield_is_amplified_by_resistance(self):
+        # Le bouclier absolu (non RAW) est amplifié par la résistance du
+        # lanceur (fr/Résistance).
+        parts = analysis_lib.analyse_equipment(
+            builder.entity(resistance=100), support.helmet_chip())
+
+        self.assertEqual(parts["shield_absolute"], 30)  # 15 * (1 + 100/100)
+
 
 class ExpectedDamageTest(unittest.TestCase):
     """Dégâts attendus : force, crits, boucliers, nova, kill."""

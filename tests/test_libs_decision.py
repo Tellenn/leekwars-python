@@ -339,6 +339,91 @@ class ShieldDecisionTest(unittest.TestCase):
                             for line in fight.logs))
 
 
+class HelmetChipTest(unittest.TestCase):
+    """La puce d'armure du poireau : « Casque » (id 21 du catalogue).
+
+    Données réelles (`api/chip/get-all`) : +15 de bouclier ABSOLU pendant
+    2 tours, 3 PT, 3 tours de cooldown, portée 0-4.
+    """
+
+    def setUp(self):
+        decision_lib.reset_state()
+
+    def tearDown(self):
+        decision_lib.reset_state()
+
+    def _fight(self, chip=None):
+        fight = support.make_fight(
+            me=builder.entity(
+                life=100, max_life=100, tp=10, max_tp=10, mp=10, max_mp=10,
+                cell=(0, 0),
+                weapons=[support.pistol(damage=10, cost=1)],
+                chips=[chip] if chip else [],
+            ),
+            enemies=[builder.entity(life=100, max_life=100, cell=(1, 0))],
+        )
+        install(fight)
+        return fight
+
+    def _turn_after(self, fight, incoming):
+        """Simule le tour de l'ennemi : il frappe `incoming`."""
+        me = fight.me
+        decision_lib.begin_turn(me)
+        decision_lib.end_turn(me)
+        me.take_damage(incoming)
+        decision_lib.begin_turn(me)
+
+    def test_the_helmet_chip_is_a_usable_option(self):
+        fight = self._fight(chip=support.helmet_chip())
+        usable, options = decision_lib.build_options(fight.me)
+        helmet = [o for o in options if o["obj"].name == "helmet"][0]
+
+        self.assertTrue(helmet["is_shield"])
+        self.assertFalse(helmet["has_damage"])
+        self.assertIn(helmet, usable)
+        self.assertFalse(helmet["on_cooldown"])
+
+    def test_the_helmet_chip_is_played_when_it_buys_a_turn_of_survival(self):
+        # 50 PV restants, l'ennemi frappe 50 : sans bouclier on meurt ce
+        # tour, avec 15 de bouclier on survit jusqu'au tour suivant.
+        fight = self._fight(chip=support.helmet_chip())
+        me = fight.me
+        enemy = fight.enemies[0]
+        self._turn_after(fight, 50)
+
+        decision_lib.attack(me, enemy)
+
+        self.assertTrue(any("Shield:" in line for line in fight.logs))
+        self.assertEqual(me.absoluteShield, 15)
+
+    def test_the_helmet_chip_is_not_played_when_it_saves_nothing(self):
+        # 23 PV restants, l'ennemi frappe 77 : le bouclier de 15 ne change
+        # rien (on meurt au même tour), l'IA garde le tempo offensif.
+        fight = self._fight(chip=support.helmet_chip())
+        me = fight.me
+        enemy = fight.enemies[0]
+        self._turn_after(fight, 77)
+
+        decision_lib.attack(me, enemy)
+
+        self.assertFalse(any("Shield:" in line for line in fight.logs))
+        self.assertEqual(me.absoluteShield, 0)
+
+    def test_the_helmet_chip_goes_on_cooldown_once_played(self):
+        fight = self._fight(chip=support.helmet_chip())
+        me = fight.me
+        enemy = fight.enemies[0]
+        self._turn_after(fight, 50)
+
+        decision_lib.attack(me, enemy)
+        self.assertEqual(fight.me.chips[0].currentCooldown, 3)
+
+        usable, options = decision_lib.build_options(fight.me)
+        self.assertFalse(any(o["obj"].name == "helmet" for o in usable))
+        self.assertTrue(any(o["obj"].name == "helmet" and o["on_cooldown"]
+                            for o in options))
+
+
 class ShotLogTest(unittest.TestCase):
     """Journal des tirs : dégâts attendus (hors vol de vie) et refus."""
 

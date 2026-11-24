@@ -253,6 +253,30 @@ def shield_chip(relative=10, absolute=0, turns=2, cost=2, name="forteresse"):
                         features=features)
 
 
+def helmet_chip(amount=15, turns=2, cost=3, cooldown=3):
+    """Puce « Casque » (id 21 du catalogue) : +15 de bouclier ABSOLU pendant
+    2 tours, 3 PT, 3 tours de cooldown, portée 0-4.
+
+    Données réelles : `api/chip/get-all` (chip id 21, "helmet"), effet
+    EFFECT_ABSOLUTE_SHIELD 15, masque de cibles 30 (ALLIES|CASTER|
+    NON_SUMMONS|SUMMONS : le bouclier s'applique bien au lanceur).
+    """
+    return builder.chip(
+        "helmet",
+        cost=cost,
+        min_range=0,
+        max_range=4,
+        features=[
+            builder.feature(
+                builder.Effect.ABSOLUTE_SHIELD,
+                GAME_TARGETS_SELF,
+                amount, amount, turns=turns,
+            )
+        ],
+        cooldown=cooldown,
+    )
+
+
 def protein_chip(min_value=80, max_value=100, turns=2, cost=3, cooldown=3):
     """Puce "Protéines" (id 8 du catalogue) : +80-100 force brute (RAW,
     donc pas amplifiée par la science) pendant 2 tours, 3 PT, 3 tours de
