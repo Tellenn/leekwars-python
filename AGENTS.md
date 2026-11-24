@@ -368,6 +368,16 @@ dans `scenarios/duel.json`).
    `docs:` / `refactor:`. Un commit = une intention.
 5. `make dist` puis copier `dist/leekwars/` dans l'éditeur Leek Wars (ou
    re-cloner le dépôt via le panneau git de l'éditeur).
+   **Déploiement par git (le plus propre)** : `git push` sur GitHub, puis
+   `git pull` côté site. L'API du site accepte la clé API pour le pull :
+   `POST https://leekwars.com/api/git/pull` avec
+   `{"folder": "github", "rebase": false}` → le pull peut donc être
+   déclenché par l'agent, sans passer par l'éditeur. Attention :
+   `git/status`, `git/remotes` et `git/diff` refusent en revanche la clé
+   API (`wrong_token` : ils exigent la session web de l'éditeur). Le
+   dossier `github/` du site est un clone du dépôt : y écrire des
+   fichiers à la main (`ai/write`) laisse l'arbre git modifié et fait
+   échouer le pull suivant — ne pas le faire, passer par le push.
 6. **Vérification runtime — obligatoire après chaque implémentation.**
    Déployer le code (`make dist` + copie dans l'éditeur, ou synchronisation
    git du dépôt du site), puis **jouer un combat de test avec ce code
