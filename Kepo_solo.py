@@ -1,99 +1,65 @@
 # @version:3.12
 #
-# IA "Kepo solo" - point d'entrée (entry point).
+# SONDE DE DIAGNOSTIC : elle ne joue pas, elle *mesure*.
 #
-# PROFIL DE JEU : DPS BRUT. Le build de Kepo est centré sur la FORCE
-# (dégâts) ; la protection viendra plus tard (résistance / sagesse).
-# Conséquences sur le code :
-#   - le score de décision est dominé par les dégâts attendus
-#     (force + crits - boucliers ennemi) ;
-#   - le soin n'est choisi que si son ratio PV/PT bat le ratio dégâts/PT ;
-#   - les buffs de force sont valorisés (ils multiplient tous les tirs
-#     suivants du tour).
+# Objectif : déterminer la MÉTRIQUE de portée du moteur.
 #
-# Structure follows the encyclopedia fr/Python advice: with turn(), the file
-# body is evaluated once (imports, persistent state), then turn() is run by
-# the engine at every turn.
+# `Cell.distance()` vaut |dx| + |dy| (mesuré au combat #54913368), mais
+# le moteur a accepté un tir de pistolet (portée 7) à une distance de 9
+# (combat #54913431) : le contrôle de portée du moteur utilise donc une
+# autre métrique. On tire à chaque tour et on journalise (dx, dy) et le
+# code du moteur : les refus tracent la frontière.
 #
-# DO NOT call turn() at the end of this file: the engine already replays it
-# at each turn, an explicit call would fire an extra turn at body-evaluation
-# time (see AGENTS.md §8, gap #10).
+# La sonde ne sert qu'à la mesure : elle est copiée temporairement à la
+# place de `Kepo_solo.py`, poussée, puis le journal du combat de test est
+# lu (voir tools/probe_launch.py pour le même principe).
 #
-# All libraries live in the "libs" folder of the Leek Wars drive:
-#   libs/constants_lib.py, libs/logs_lib.py, libs/analysis_lib.py,
-#   libs/decision_lib.py, libs/equipment_lib.py
-#
-# IMPORT NOTE: the editor's type stubs don't declare the "libs" package, so
-# Pyright flags the import as unresolved and members as unknown. Runtime is
-# unaffected; "# type: ignore" silences these false positives. A local copy of
-# the official stubs is available in stubs/__builtins__.pyi for local
-# checking.
-#
-# Decision flow per turn:
-#   0. equip a weapon if none held (best damage/TP ratio)
-#   1. find nearest enemy
-#   2. loop: pick the best value/TP option among attacks, buffs and HEALS,
-#      execute it (a heal wins exactly when its heal/TP ratio beats the
-#      best damage/TP ratio, as specified; heal is wisdom-amplified and
-#      clamped to missing HP)
-#   3. if nothing was in range, reposition (1v1: stay out of the enemy's
-#      reach, even after their movement, to keep the initiative) and rerun
-#   4. optionally break line of sight (see HIDE_AFTER_ATTACK)
+# Aucun import : la sonde n'utilise que les globaux du moteur.
 
-import libs.logs_lib as logs_lib  # type: ignore
-import libs.equipment_lib as equipment_lib  # type: ignore
-import libs.decision_lib as decision_lib  # type: ignore
 
-# Comportement de fin de tour.
-#   False : DPS pur (défaut) — on reste à portée et on garde le tempo
-#           offensif. C'est le choix de Kepo : build centré sur la force,
-#           la protection viendra plus tard.
-#   True  : comportement "shoot and hide" — on tire puis on fuit (casse la
-#           ligne de vue). Utile si le build perd des PV plus vite qu'il
-#           n'en inflige.
-HIDE_AFTER_ATTACK = True
-
-me = Fight.me
-
-logs_lib.log("Booting up Kepo_solo.py !")
+def _pick_pistol(me):
+    """L'arme « circle » de plus grande portée (aucune contrainte de visée)."""
+    best = None
+    for weapon in me.weapons:
+        if getattr(weapon, "launchType", 7) != 7:
+            continue
+        if best is None or weapon.maxRange > best.maxRange:
+            best = weapon
+    return best
 
 
 def turn():
+    me = Fight.me
     enemy = Fight.getNearestEnemy()
-
-    if enemy == None:
-        logs_lib.log("No enemy detected")
+    if enemy is None:
+        Debug.log("probe: no enemy")
         return
 
-    # Mesure des dégâts reçus pendant le tour de l'ennemi (utilisés pour
-    # décider si l'on pose un bouclier).
-    decision_lib.begin_turn(me)
+    pistol = _pick_pistol(me)
+    if pistol is None:
+        Debug.log("probe: no circle weapon")
+        return
+    if me.weapon is not pistol:
+        me.setWeapon(pistol)
 
-    # Step 0: have a weapon in hand from the start
-    equipment_lib.equip_starting_weapon(me, enemy)
+    # On se place à une distance connue : une fois sur la rangée de
+    # l'ennemi, une fois en diagonale (les deux splits de la distance).
+    index = Fight.turn
+    step = 2 + (index % 5)  # 2..6
+    if index % 2 == 0:
+        target_x = enemy.cell.x + step
+        target_y = enemy.cell.y
+    else:
+        target_x = enemy.cell.x + step
+        target_y = enemy.cell.y + step
+    cell = Field.cellFromXY(target_x, target_y)
+    if cell is not None:
+        me.moveToward(cell, me.mp)
 
-    did_hit = decision_lib.attack(me, enemy)
-
-    # If nothing was in range, reposition ourselves: in 1v1 we stay out of
-    # the enemy's reach (even after their movement) so that we keep the
-    # initiative and hit them on the next turn. Otherwise we just close in.
-    if not did_hit and me.mp > 0:
-        decision_lib.approach(me, enemy)
-        did_hit = decision_lib.attack(me, enemy)
-
-    # On n'a toujours pas pu tirer : nos PT sont inutilisés. On lance un
-    # buff "un tour avant" si c'est plus rentable que d'attendre
-    # l'ouverture du tour suivant (le tour suivant sera amplifié).
-    if not did_hit:
-        decision_lib.prep_buff(me, enemy)
-
-    # Enfin, on peut tenter de casser la ligne de vue — mais seulement si
-    # on a réellement tiré : se cacher sans avoir rien fait garantit
-    # qu'on ne pourra plus tirer du tout (le décor nous sépare de la
-    # cible, et le plan de placement ne nous rapprochera pas).
-    if HIDE_AFTER_ATTACK and did_hit:
-        decision_lib.hide(me, enemy)
-
-    # Mémorise nos PV : la différence avec le tour suivant mesurera les
-    # dégâts de l'ennemi.
-    decision_lib.end_turn(me)
+    code = me.useWeapon(enemy)
+    dx = enemy.cell.x - me.cell.x
+    dy = enemy.cell.y - me.cell.y
+    Debug.log(f"probe: code={code} dx={dx} dy={dy} "
+              f"cheb={max(abs(dx), abs(dy))} man={abs(dx) + abs(dy)} "
+              f"d2={dx * dx + dy * dy} range={pistol.maxRange} "
+              f"r2={pistol.maxRange * pistol.maxRange}")
