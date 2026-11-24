@@ -141,6 +141,15 @@ Conséquences sur le code :
     que les armes. Les dégâts de l'ennemi ne sont pas modélisés : ils sont
     **mesurés** d'un tour à l'autre (`decision_lib.begin_turn()` compare
     nos PV de la fin du tour précédent à nos PV actuels) ;
+  - le bouclier est comparé aux **dégâts que nous ferions à la place**
+    (`decision_lib.shield_worth()`) : 180 de dégâts empêchés valent 120 de
+    dégâts faits, donc si on peut faire plus, on tire. La valeur du
+    bouclier dépend des dégâts que **l'ennemi va nous faire** : son
+    nombre de coups par tour (`threat_lib.hits_per_turn()`) et les dégâts
+    mesurés. Contre un ennemi à la machine gun (9 coups), le Casque
+    bloque 15 × 9 = 135 PV par tour (270 sur deux tours) → il vaut le
+    coup ; contre un ennemi au pistolet (4 coups), il ne bloque que 120
+    PV sur deux tours → moins que les 156 de la machine gun, donc on tire ;
   - un bouclier qui **évite notre mort** passe avant tout (`MANDATORY`) ;
     un bouclier inutile (l'ennemi ne fait presque pas de dégâts, ou on
     peut le tuer) est laissé de côté : on garde le tempo offensif ;
@@ -481,6 +490,7 @@ dans `scenarios/duel.json`).
 | 48 | Le **soin** était choisi sur son rapport `PV/PT` : un soin bon marché (27 PV pour 2 PT) pouvait voler la place d'un tir à 45 PV, alors que faire 30 de dégâts vaut mieux que 25 de soin | `libs/decision_lib.py` | **corrigé** — le soin n'est proposé que si on ne peut pas faire autant de dégâts que le soin vaut (comparaison sur les **valeurs**, plus sur les rapports) ; exception : le soin qui **sauve notre mort** passe avant tout (`MANDATORY`) |
 | 49 | Le **bouclier absolu de la cible** était retiré **une fois par tir** au lieu d'**une fois par coup** : contre une cible avec 17 de bouclier, la machine gun (3 coups) était surestimée de 73 % (80 de dégâts au lieu de 46) — mesuré sur le moteur (combat #54914966 : 39 et 63 dégâts réels pour 80 attendus) | `libs/analysis_lib.py` | **corrigé** — `analyse_equipment()` garde un coup par effet de dégâts (`damage_hits`) et `hit_damage()` applique le bouclier à chaque coup (fr/Résistance) |
 | 50 | L'IA s'arrêtait dès que **n'importe quelle** arme pouvait toucher : elle se postait à 7 cases (portée du pistolet) et la machine gun (portée 6, 3 coups, +14 % de dégâts de tour) restait inutilisable | `libs/decision_lib.py`, `Kepo_solo.py` | **corrigé** — `reposition_for_best_weapon()` : on se place (avec les PM, avant les tirs) à portée et aligné de la meilleure arme, en VALEUR (dégâts du tour) ; 2 cases max, et seulement si l'ennemi peut déjà nous atteindre (sinon il faut un gain de +25 %) ; ce tour-là on ne fuit pas |
+| 51 | Le bouclier était joué dès que sa protection était non nulle : il pouvait voler 3 PT (et un tir) à la machine gun pour 120 de dégâts empêchés, alors que 156 de dégâts faits valent mieux. La valeur du bouclier dépend des dégâts que **l'ennemi va nous faire** (nombre de coups par tour) : contre une machine gun elle vaut 270, contre un pistolet 120 | `libs/decision_lib.py` | **corrigé** — `shield_worth()` : le bouclier n'est joué que si les dégâts qu'il empêche valent au moins les dégâts que nous ferions à la place (même échelle « dégâts » que le soin) ; exception : s'il sauve notre mort (`MANDATORY`) |
 
 ---
 

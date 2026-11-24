@@ -507,6 +507,28 @@ def reposition_for_best_weapon(me, enemy):
     return True
 
 
+def shield_worth(me, o, usable, enemy, estimate=False):
+    """Le bouclier vaut-il le coup face à nos tirs ?
+
+    On compare les VALEURS (comme pour le soin) : les dégâts que le
+    bouclier empêche **sur toute sa durée** contre les dégâts qu'on
+    ferait à la place en le jouant. 180 de dégâts empêchés valent 120 de
+    dégâts faits : si on peut faire plus, on tire.
+
+    Exception : le bouclier qui **sauve notre mort** passe avant tout
+    (`MANDATORY`), et un bouclier inutile (valeur 0) n'est jamais joué.
+    """
+    value = shield_value(me, o, usable, enemy, estimate=estimate)
+    if value <= 0 or value >= MANDATORY:
+        return value
+    best = best_attack_now(me, usable, enemy)
+    if best == None:
+        return value  # aucune arme ne touche : le bouclier est gratuit
+    if attack_value(me, best, enemy)[0] > value:
+        return 0.0  # on peut faire plus de dégâts que le bouclier n'en évite
+    return value
+
+
 def can_still_shoot(me, usable, spent):
     # Reste-t-il de quoi tirer après avoir payé `spent` points de tour ?
     #
@@ -542,7 +564,7 @@ def shield_plan(me, usable, enemy):
             continue
         if o["cost"] > me.tp:
             continue
-        value = shield_value(me, o, usable, enemy)
+        value = shield_worth(me, o, usable, enemy)
         if value <= 0 and _INCOMING <= 0 \
                 and threat_lib.in_reach(enemy, me) \
                 and best_attack_now(me, usable, enemy) != None:
@@ -552,7 +574,7 @@ def shield_plan(me, usable, enemy):
             # coup protégé. (Si on ne peut pas tirer, c'est
             # `prep_shield()` qui s'en charge : l'armure « un tour
             # avant ».)
-            value = shield_value(me, o, usable, enemy, estimate=True)
+            value = shield_worth(me, o, usable, enemy, estimate=True)
         if value <= 0:
             continue  # le bouclier ne protège de rien : inutile
         if value < MANDATORY and not can_still_shoot(me, usable, o["cost"]):
@@ -915,7 +937,7 @@ def option_score(me, o, usable, enemy):
                 # même journalisée).
                 return 0, value
     elif o["is_shield"] and not o["has_damage"]:
-        value = shield_value(me, o, usable, enemy)
+        value = shield_worth(me, o, usable, enemy)
     elif o["is_buff"]:
         value = buff_value(me, o, best_attack_now(me, usable, enemy), enemy)
     else:

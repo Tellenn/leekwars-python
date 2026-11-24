@@ -611,10 +611,40 @@ class OpeningShieldTest(unittest.TestCase):
         self.assertTrue(any("Shot #0" in line for line in fight.logs))
 
     def test_the_opening_shield_is_played_as_soon_as_it_is_ready(self):
-        # L'ennemi frappe peu (2 PV par tour) mais on ne peut pas le tuer :
-        # l'armure est posée quand même, dès qu'elle est prête (son
-        # rapport valeur/PT est moins bon que celui d'un tir, on l'accepte :
-        # c'est de la survie).
+        # L'ennemi frappe fort et souvent (une machine gun : 9 coups par
+        # tour) : le Casque bloque 15 PV par coup, soit 135 PV par tour,
+        # 270 sur ses deux tours. C'est plus que les dégâts que nous
+        # ferions à la place : on s'arme.
+        weapon = builder.weapon(
+            "machine_gun",
+            cost=1,
+            min_range=1,
+            max_range=6,
+            max_uses=3,
+            features=[
+                builder.feature(
+                    builder.Effect.DAMAGE,
+                    builder.Effect.Target.ENEMIES,
+                    30, 30,
+                )
+                for _ in range(3)
+            ],
+        )
+        fight = self._fight(chip=support.helmet_chip(), enemy_life=5000)
+        fight.enemies[0].weapon = weapon
+        me = fight.me
+        enemy = fight.enemies[0]
+        self._turn_after(fight, 270)  # 9 coups de 30
+
+        decision_lib.attack(me, enemy)
+
+        self.assertTrue(any("Opening shield:" in line
+                            for line in fight.logs))
+
+    def test_the_opening_shield_is_not_played_when_the_shots_are_better(self):
+        # L'ennemi frappe peu (2 PV par tour) : le Casque ne protège que de
+        # 2 PV par coup (4 PV sur deux tours), moins que les dégâts que
+        # nous faisons : on tire.
         fight = self._fight(chip=support.helmet_chip(), enemy_life=5000)
         me = fight.me
         enemy = fight.enemies[0]
@@ -622,8 +652,9 @@ class OpeningShieldTest(unittest.TestCase):
 
         decision_lib.attack(me, enemy)
 
-        self.assertTrue(any("Opening shield:" in line
-                            for line in fight.logs))
+        self.assertFalse(any("Opening shield:" in line
+                             for line in fight.logs))
+        self.assertTrue(any("Shot #0" in line for line in fight.logs))
 
     def test_the_opening_shield_is_played_on_the_first_turn_if_the_enemy_hits(self):
         # Premier tour : on ne connaît pas encore les dégâts de l'ennemi,
@@ -632,6 +663,21 @@ class OpeningShieldTest(unittest.TestCase):
         fight = self._fight(chip=support.helmet_chip())
         me = fight.me
         enemy = fight.enemies[0]
+        enemy.weapon = builder.weapon(
+            "machine_gun",
+            cost=1,
+            min_range=1,
+            max_range=6,
+            max_uses=3,
+            features=[
+                builder.feature(
+                    builder.Effect.DAMAGE,
+                    builder.Effect.Target.ENEMIES,
+                    30, 30,
+                )
+                for _ in range(3)
+            ],
+        )
         decision_lib.begin_turn(me)
 
         decision_lib.attack(me, enemy)
