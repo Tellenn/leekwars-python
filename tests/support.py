@@ -31,6 +31,11 @@ _DEFAULT_FIGHT = builder.make_fight(
 )
 install(_DEFAULT_FIGHT)
 
+# `libs.decision_lib` se charge APRÈS l'installation du mock : ses
+# modules lisent les globaux du SDK (Effect, Fight) au moment de
+# l'import.
+import libs.decision_lib  # noqa: E402
+
 # ---------------------------------------------------------------------------
 # Constantes de scénario (valeurs nommées : les tests restent lisibles)
 # ---------------------------------------------------------------------------
@@ -55,6 +60,8 @@ def load_ai(fight):
     # nouveau combat = journal repart de zéro (le "une fois par combat"
     # des logs est réarmé)
     libs.logs_lib.reset()
+    # ... et l'état de décision aussi (PV mémorisés, buffs encore actifs)
+    libs.decision_lib.reset_state()
     ai = importlib.import_module("Kepo_solo")
     importlib.reload(ai)
     return ai

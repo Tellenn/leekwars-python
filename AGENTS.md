@@ -88,14 +88,28 @@ Conséquences sur le code :
   rapportée aux PT **réellement dépensés** (équipement + tirs) ;
 - un **soin** n'est choisi que si son ratio `PV/PT` bat le ratio
   `dégâts/PT` de la meilleure attaque (le soin n'est pas une priorité) ;
-- le **buff de force part AVANT les tirs** (`strength_buff_plan()`) : il
-  multiplie tous les tirs du tour. Il n'est lancé que si le total de dégâts
-  avec buff dépasse le total sans buff (le buff peut repousser un tir) ;
-- l'**horizon du buff** est sa durée (`parts["buff_turns"]`), pas seulement
-  le tour courant : la puce « Protéines » (+80-100 force, 2 tours) continue
-  d'amplifier les tirs du tour suivant, et ne vaut donc pas le tir qu'elle
-  fait perdre aujourd'hui. Le gain est plafonné par les PV restants de
-  l'ennemi ;
+- le **buff part AVANT les tirs** (`decision_lib.buff_plan()`) : il
+  multiplie tous les tirs du tour et des tours suivants. Sa valeur
+  (`decision_lib.buff_gain()`) est l'**écart de PV restants entre la
+  branche « buffée » et la branche « sans buff »**, simulées sur
+  l'horizon du buff ;
+- **une cible faible se tue, elle ne se buff pas** : si l'ennemi meurt
+  dans les deux branches, la valeur du buff est 0 (il ne serait qu'un tir
+  perdu) ; le buff n'est lancé que s'il rapproche la mort de l'ennemi ;
+- l'**horizon du buff** est sa durée (`parts["buff_turns"]`) : la puce
+  « Protéines » (+80-100 force, 2 tours) continue d'amplifier les tirs du
+  tour suivant. Un buff de N tours agit pendant le tour où il est joué
+  **et les N-1 tours suivants** (fr/Effets : il disparaît au début du
+  N-ième tour suivant) ;
+- **un buff déjà joué n'est pas rejoué** tant que son effet est actif
+  (`decision_lib.buff_still_active()`) : il est **relancé** quand la puce
+  est de nouveau disponible (cooldown expiré) et que le plan le juge à
+  nouveau rentable ;
+- le **buff « un tour avant »** (`decision_lib.prep_buff()`) : quand on
+  n'a pas pu tirer (l'ennemi est hors de portée), nos PT sont inutilisés ;
+  on lance alors le buff s'il est **plus rentable que d'attendre
+  l'ouverture du tour suivant** (cette fois-ci le buff ne couvre qu'un
+  tour de tir au lieu de deux) ;
 - une **puce en cooldown** (`Chip.currentCooldown`) n'est pas proposée : le
   moteur la refuse (`Fight.Use.INVALID_COOLDOWN`) ;
 - la **classification d'un effet** repose sur son *type*, pas sur son masque
@@ -128,19 +142,23 @@ Flux d'un tour (`ai.turn()`) :
 2. `decision_lib.begin_turn()` — mesure des dégâts reçus au tour précédent.
 3. `equipment_lib.equip_starting_weapon()` — équipe la meilleure arme
    (ratio dégâts/PT) si aucune n'est en main.
-4. `decision_lib.attack()` — **buff de force d'abord** (s'il est rentable),
-   puis boucle : on **re-score** toutes les options à chaque itération (les
-   PV, les PT et les boucliers changent), on exécute la meilleure (attaque /
-   soin / buff / bouclier), on mesure les dégâts réels vs attendus.
+4. `decision_lib.attack()` — **buff d'ouverture d'abord** (s'il est
+   rentable), puis boucle : on **re-score** toutes les options à chaque
+   itération (les PV, les PT et les boucliers changent), on exécute la
+   meilleure (attaque / soin / buff / bouclier), on mesure les dégâts
+   réels vs attendus.
 5. Si rien n'était à portée : `decision_lib.approach()` — en 1c1 on se
    place hors de la zone de menace de l'ennemi (`threat_lib.kite_distance()`),
    sinon on se rapproche (`me.moveToward(enemy)`) ; puis on rejoue le
    calcul (la rentabilité change avec la distance).
-6. `decision_lib.hide()` — **seulement si `HIDE_AFTER_ATTACK`** (par défaut
+6. Si on n'a toujours pas pu tirer : `decision_lib.prep_buff()` — buff
+   « un tour avant » (les PT sont inutilisés, le tour suivant sera
+   amplifié) s'il bat l'attente de l'ouverture du tour suivant.
+7. `decision_lib.hide()` — **seulement si `HIDE_AFTER_ATTACK`** (par défaut
    on ne fuit pas : Kepo est un DPS). La fuite est **sautee** si l'ennemi
    ne peut pas nous atteindre (hors de sa zone de menace) : elle ne ferait
    que perdre nos PM et l'initiative.
-7. `decision_lib.end_turn()` — mémorise nos PV (base de la mesure du tour
+8. `decision_lib.end_turn()` — mémorise nos PV (base de la mesure du tour
    suivant).
 
 ### Politique de journal
@@ -274,6 +292,7 @@ Récapitulatif de l'API Python : **`docs/leekwars-api-python.md`**.
 | Puces : données et masques | `chip/get-all` : `value1`/`value2` → `Feature.minValue`/`maxValue` (= value1, value1+value2), `turns` = durée de l'effet, `cooldown` = tours de recharge, `effects[].id` = type d'effet (`Effect.Type`) | catalogue du site (`api/chip/get-all`) + journal de combat (le tiret affiche « damage: 15.0-20.0 », soit min/max) |
 | Masques de cibles | 31 = ENNEMIS\|ALLIES\|CASTER\|NON_SUMMONS\|SUMMONS (armes, soins), 30 = ALLIES\|CASTER\|NON_SUMMONS\|SUMMONS (buffs sur soi), 26 = sans CASTER (buffs d'alliés) | catalogue du site (`api/chip/get-all`) |
 | Puce « Protéines » (id 8) | `RAW_BUFF_STRENGTH` (38) 80-100, 2 tours, 3 PT, cooldown 3 — buff **brut** (pas amplifié par la science) | catalogue du site (`api/chip/get-all`) |
+| Durée d'un buff | un buff de N tours agit pendant le tour où il est joué **et les N-1 tours suivants** (il disparaît au début du N-ième tour suivant) ; les effets perdent 1 tour au début du tour de leur lanceur | fr/Effets (« un boost de N tours disparaît au début du N-ième tour suivant de son lanceur ») |
 | Érosion | les dégâts subis réduisent la **vie maximum** : 5 % des dégâts classiques, 10 % du poison, +10 % sur un coup critique ; les boucliers atténuent l'érosion | `docs/encyclopedia/erosion.md` |
 | Ligne de vue | `Item.needsLos` : la plupart des armes l'exigent, 11 puces du catalogue frappent sans (trébuchet, étincelle, repiquage, picquant…) | `docs/leekwars-api-python.md` + données du jeu (`weapon/get-all`, `chip/get-all`) |
 | Distance | le moteur compte la portée avec `Cell.distance()` : **une diagonale vaut 2 cases** (`2·min(dx,dy) + |dx−dy|`) — c'est la métrique à utiliser pour toute comparaison de portée | mesuré sur le moteur (combat de test #54912618 : le fusil, portée 7, est accepté à distance 7 ; la puce, portée 5, est refusée) — **le mock utilise le chebyshev** : écart connu (cf. §8, #27) |
@@ -372,6 +391,11 @@ dans `scenarios/duel.json`).
 | 30 | Les **cooldowns de puces** n'étaient pas modélisés : l'IA pouvait proposer une puce que le moteur refuse (`Fight.Use.INVALID_COOLDOWN`) et perdre son ouverture de tour | `libs/decision_lib.py`, `leekwars_api/fight.py` | **corrigé** — `Chip.currentCooldown` est lu, les puces en cooldown sont exclues des options ; le mock modélise le cooldown |
 | 31 | Le **mock** touchait le lanceur avec ses propres attaques : le masque 31 du catalogue contient le bit CASTER, et le mock ajoutait le lanceur aux cibles de tout effet | `leekwars_api/fight.py` | **corrigé** — seuls les effets « sur soi » (soin, buff, bouclier) touchent le lanceur (mesuré sur le site : le tir du joueur ne le blesse pas) |
 | 32 | Le **mock** ne rendait pas la stat d'un buff expiré (le +force restait acquis) | `leekwars_api/fight.py` | **corrigé** — les stats buffées sont recalculées à chaque tour depuis les effets actifs |
+| 33 | Le **plan de buffs** était un calcul ad hoc par type de buff (la force avait un horizon sur la durée, la puissance et les TP non) et il comptait comme un gain les dégâts **au-delà de la mort** de l'ennemi : l'IA pouvait sacrifier un tir pour buff une cible qu'elle tuait sans lui | `libs/decision_lib.py` | **corrigé** — `buff_gain()` : la valeur d'un buff est l'écart de PV restants entre la branche « buffée » et la branche « sans buff » (horizon = la durée du buff) ; si l'ennemi meurt dans les deux branches, la valeur est 0 (une cible faible se tue) |
+| 34 | Le buff n'était jamais joué quand l'IA **ne pouvait pas tirer** ce tour (l'ennemi hors de portée) : la décision de buff exigeait une attaque de référence à portée | `libs/decision_lib.py` | **corrigé** — `prep_buff()` : buff « un tour avant », joué seulement s'il bat l'attente de l'ouverture du tour suivant (comparaison sur le même horizon) |
+| 35 | Un buff **sans cooldown** était rejoué à chaque tour, alors que son effet était encore actif (la force montait en escalier) | `libs/decision_lib.py` | **corrigé** — `buff_still_active()` : on suit les buffs joués (`_ACTIVE_BUFFS`) et on ne rejoue pas un buff dont l'effet court ; il est relancé quand la puce est de nouveau disponible |
+| 36 | Hypothèses du plan de buffs : (a) le buff agit immédiatement et couvre le tour où il est joué **et** les N-1 tours suivants ; (b) au tour suivant on rejoue avec la même arme, les PT pleins et le compteur d'utilisations remis à zéro ; (c) l'ennemi se rapproche de `maxMP` cases par tour (modèle de menace) pour décider si un buff « un tour avant » sera utilisé ; (d) la puissance ajoute des dégâts plats par tir (hypothèse déjà assumée, cf. #8) | `libs/decision_lib.py` | hypothèses assumées — à confronter à un combat de test |
+| 37 | Le buff de **PM** (`buff_mp`) n'est pas valorisé (il ne sert qu'au repositionnement) ; le buff de TP est valorisé comme des PT supplémentaires (tirs en plus) | `libs/decision_lib.py` | **partiel** (TP corrigé, PM à faire) |
 
 ---
 

@@ -200,8 +200,12 @@ def shielded_damage(base, target):
     return final
 
 
-def expected_damage(o, target, attacker=None):
-    # Expected damage dealt to 'target' by 'attacker' (default: Fight.me).
+def raw_damage(o, target, attacker=None):
+    # Dégâts d'un tir SANS le plafond "PV restants de la cible".
+    #
+    # Le plafond de `expected_damage` vaut pour la comparaison "un tir
+    # vaut-il encore quelque chose" ; le modèle de décision (horizon du
+    # buff) simule plusieurs tours de tir et a besoin du montant brut.
     #
     # The force/crit multiplier is read NOW so a strength buff cast this
     # turn benefits immediately to the following shots.
@@ -216,6 +220,12 @@ def expected_damage(o, target, attacker=None):
     if o["kill"]:
         # Instant execution: every remaining life point falls.
         total = target.life
+    return total
+
+
+def expected_damage(o, target, attacker=None):
+    # Expected damage dealt to 'target' by 'attacker' (default: Fight.me).
+    total = raw_damage(o, target, attacker)
     if total > target.life:
         total = target.life
     return total
@@ -253,10 +263,21 @@ def remaining_uses(item, me):
     # (le moteur refuse la suivante avec le code MAX_USES) et
     # `Entity.itemUses(item)` le compteur d'utilisations déjà faites.
     # None = pas de plafond.
-    max_uses = getattr(item, "maxUses", 0)
-    if max_uses <= 0:
+    left = max_uses(item)
+    if left is None:
         return None
-    return max(0, max_uses - me.itemUses(item))
+    return max(0, left - me.itemUses(item))
+
+
+def max_uses(item):
+    # Plafond d'utilisations par tour de l'objet (None = pas de plafond).
+    #
+    # Le compteur est remis à zéro à chaque tour : au tour suivant on
+    # peut donc retirer le maximum.
+    limit = getattr(item, "maxUses", 0)
+    if limit <= 0:
+        return None
+    return limit
 
 
 def in_range(obj, me, target):

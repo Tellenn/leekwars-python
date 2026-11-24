@@ -47,8 +47,16 @@ MANDATORY = 1e9
 #
 # _LAST_LIFE     : nos PV à la fin de notre tour précédent.
 # _INCOMING      : dégâts subis pendant le tour de l'ennemi (mesure).
+# _ACTIVE_BUFFS  : buffs déjà joués -> dernier tour où ils sont actifs.
+# _TURN          : compteur de tours (incrémenté par `begin_turn`).
 _LAST_LIFE = None
 _INCOMING = 0.0
+_ACTIVE_BUFFS = {}
+_TURN = 0
+
+#: Un buff sans durée (effet instantané) reste actif pour toujours :
+#: on ne le rejoue pas.
+_FOREVER = 10 ** 6
 
 
 def begin_turn(me):
@@ -58,7 +66,8 @@ def begin_turn(me):
     début d'un tour, la différence entre nos PV de la fin du tour
     précédent et nos PV actuels est ce que l'ennemi nous a coûté.
     """
-    global _INCOMING
+    global _INCOMING, _TURN
+    _TURN += 1
     if _LAST_LIFE is not None:
         taken = _LAST_LIFE - me.life
         _INCOMING = taken if taken > 0 else 0.0
@@ -73,9 +82,11 @@ def end_turn(me):
 
 def reset_state():
     """Oublie l'historique du combat (nouveau combat, tests)."""
-    global _LAST_LIFE, _INCOMING
+    global _LAST_LIFE, _INCOMING, _TURN, _ACTIVE_BUFFS
     _LAST_LIFE = None
     _INCOMING = 0.0
+    _TURN = 0
+    _ACTIVE_BUFFS = {}
 
 
 def weapon_uses(me, o, budget=None):
@@ -162,7 +173,7 @@ def build_options(me):
     for chip in analysis_lib.defensive_list(me, "chips"):
         parts = analysis_lib.analyse_equipment(me, chip)
         has_buff = (parts["buff_strength"] > 0 or parts["buff_power"] > 0
-                    or parts["buff_tp"] > 0)
+                    or parts["buff_tp"] > 0 or parts["buff_mp"] > 0)
         options.append({
             "kind": "chip", "obj": chip, "cost": chip.cost, "switch": 0,
             "parts": parts, "used": False,
@@ -179,14 +190,20 @@ def build_options(me):
     for o in options:
         if o["on_cooldown"]:
             continue  # puce en cooldown : le moteur la refuserait
+        if o["is_buff"] and buff_still_active(o):
+            continue  # l'effet du buff est encore actif : le rejouer est inutile
         if o["has_damage"] or o["is_buff"] or o["is_heal"] or o["is_shield"]:
             usable.append(o)
     return usable, options
 
 
-def best_attack_now(me, usable, enemy):
+def best_attack_now(me, usable, enemy, require_range=True):
     # Best attackable option right now, used as the reference to estimate
     # the value of buffs. Returns None if no attack is usable.
+    #
+    # `require_range` = False : on ignore la portée (l'ennemi est hors de
+    # portée, on veut quand même savoir quel serait notre arme de
+    # référence pour valoriser un buff).
     best = None
     best_score = 0
     for o in usable:
@@ -194,7 +211,7 @@ def best_attack_now(me, usable, enemy):
             continue
         if o["kind"] == "chip" and o["used"]:
             continue
-        if not analysis_lib.in_range(o["obj"], me, enemy):
+        if require_range and not analysis_lib.in_range(o["obj"], me, enemy):
             continue
         value, score, uses = attack_value(me, o, enemy)
         if score > best_score:
@@ -203,43 +220,18 @@ def best_attack_now(me, usable, enemy):
     return best
 
 
-def buff_value(me, o, reference_attack, enemy):
-    # Valeur estimée d'un buff de force / de puissance / de TP, sur
-    # l'échelle "valeur / TP".
-    #
-    # Le buff de force est valorisé sur toute sa durée (voir
-    # strength_buff_gain) : c'est la même estimation que celle qui décide
-    # du buff d'ouverture, donc le journal reste cohérent.
-    if reference_attack == None:
-        return 0
-    if o["parts"]["buff_strength"] > 0:
-        return strength_buff_gain(me, o, reference_attack, enemy)
+def buff_value(me, o, reference, enemy):
+    """Valeur estimée d'un buff (force / puissance / TP), sur l'échelle
+    "valeur / TP".
 
-    ref = reference_attack["parts"]
-    ref_gross = ref["amp_raw"] * analysis_lib.force_crit_multiplier(me) \
-        + ref["flat_sub"]
-    ref_net = analysis_lib.expected_damage(ref, enemy, me)
-    shield_factor = 1
-    if ref_gross > 0:
-        shield_factor = ref_net / ref_gross
-        if shield_factor < 0:
-            shield_factor = 0
-
-    budget = me.tp - o["cost"] - reference_attack["switch"]
-    if budget < 0 or reference_attack["cost"] <= 0:
+    La valeur est l'écart de PV restants entre la branche « buffée » et la
+    branche « sans buff » (voir `buff_gain`) : c'est la même estimation
+    que celle qui décide du buff à jouer, donc le journal reste cohérent.
+    """
+    if reference == None:
         return 0
-    shots = weapon_uses(me, reference_attack, budget=budget)
-    if shots <= 0:
-        return 0
-
-    value = 0
-    if o["parts"]["buff_power"] > 0:
-        # ASSUMPTION: power adds flat damage per shot (to be confirmed in game)
-        value += shots * o["parts"]["buff_power"] * shield_factor
-    if o["parts"]["buff_tp"] > 0:
-        extra_shots = int(o["parts"]["buff_tp"] / reference_attack["cost"])
-        value += extra_shots * analysis_lib.expected_damage(ref, enemy, me)
-    return value
+    return buff_gain(me, o, reference, enemy, tp=me.tp,
+                     switch=reference["switch"])
 
 
 def heal_value(me, o):
@@ -343,85 +335,273 @@ def shield_value(me, o, usable, enemy):
     return extra * per_turn
 
 
-def strength_buff_gain(me, buff_option, reference, enemy):
-    # Gain de dégâts apporté par un buff de force lancé AVANT les tirs.
-    #
-    # Sans buff :   shots_without * dégâts_par_tir
-    # Avec buff :   shots_with    * dégâts_par_tir_amplifié
-    #
-    # Le buff consomme des PT : il peut repousser un tir. Il ne vaut le coup
-    # que si le total avec buff dépasse le total sans buff.
-    #
-    # HORIZON : la durée du buff (`parts["buff_turns"]`), pas seulement le
-    # tour courant. Un buff qui dure plusieurs tours (puce "Protéines" :
-    # +80-100 force pendant 2 tours) continue d'amplifier les tirs des
-    # tours suivants : ne compter que le tour courant le rendait
-    # systématiquement non rentable (il nous fait perdre un tir pour rien),
-    # et l'IA n'utilisait jamais la puce.
-    #
-    # Le gain est plafonné par les PV restants de l'ennemi : des dégâts
-    # au-delà de sa mort ne valent rien.
-    attack_cost = reference["cost"] + reference["switch"]
-    if attack_cost <= 0:
+def buff_key(o):
+    """Type de buff d'une option : force, puissance, TP ou MP."""
+    parts = o["parts"]
+    if parts["buff_strength"] > 0:
+        return "strength"
+    if parts["buff_power"] > 0:
+        return "power"
+    if parts["buff_tp"] > 0:
+        return "tp"
+    if parts["buff_mp"] > 0:
+        return "mp"
+    return None
+
+
+def buff_still_active(o):
+    """Un buff de ce type est-il encore actif ?
+
+    On ne rejoue pas un buff dont l'effet n'est pas terminé : une puce
+    sans cooldown l'empilerait sans raison (et son effet ne nous
+    apporterait rien de neuf).
+    """
+    key = buff_key(o)
+    if key == None:
+        return False
+    last = _ACTIVE_BUFFS.get(key)
+    if last == None:
+        return False
+    return _TURN <= last
+
+
+def mark_buff_cast(o):
+    """Mémorise le buff joué : il reste actif jusqu'à la fin de sa durée.
+
+    La durée suit la règle du jeu : un buff de N tours agit pendant le
+    tour où il est lancé ET les N-1 tours suivants (il disparaît au
+    début du N-ième tour suivant, fr/Effets).
+    """
+    key = buff_key(o)
+    if key == None:
+        return
+    duration = o["parts"]["buff_turns"]
+    if duration <= 0:
+        _ACTIVE_BUFFS[key] = _FOREVER
+    else:
+        _ACTIVE_BUFFS[key] = _TURN + duration - 1
+
+
+def _shots(budget, cost, cap):
+    """Tirs possibles : budget de PT, coût de l'arme, plafond d'usages."""
+    if budget <= 0 or cost <= 0:
         return 0
-    shots_without = int(me.tp / attack_cost)
-    shots_with = int((me.tp - buff_option["cost"]) / attack_cost)
-    # Plafond d'utilisations par tour : on ne peut pas tirer plus que
-    # `maxUses` fois, même si les PT permettraient plus de tirs.
-    cap = analysis_lib.remaining_uses(reference["obj"], me)
-    if cap is not None:
-        shots_without = min(shots_without, cap)
-        shots_with = min(shots_with, cap)
-    if shots_with <= 0:
-        return 0  # le buff supprimerait tous les tirs
-    damage = analysis_lib.expected_damage(reference["parts"], enemy, me)
+    shots = budget // cost
+    if cap is not None and cap < shots:
+        shots = cap
+    return max(0, shots)
+
+
+def _shield_factor(parts, enemy, me):
+    # Part des dégâts bruts qui passe les boucliers ennemis (fr/Résistance).
+    gross = (parts["amp_raw"] * analysis_lib.force_crit_multiplier(me)
+             + parts["flat_sub"])
+    if gross <= 0:
+        return 1.0
+    net = analysis_lib.raw_damage(parts, enemy, me)
+    factor = net / gross
+    return factor if factor > 0 else 0.0
+
+
+def buffed_damage(me, parts, damage, enemy):
+    """Dégâts par tir une fois le buff appliqué."""
+    if parts["buff_strength"] > 0:
+        # fr/Force : DegatsFinaux = Base * (1 + Force / 100)
+        return (damage * (100 + me.strength + parts["buff_strength"])
+                / (100 + me.strength))
+    if parts["buff_power"] > 0:
+        # ASSUMPTION : la puissance ajoute des dégâts plats par tir
+        # (à confirmer en jeu, cf. AGENTS.md §8).
+        return damage + parts["buff_power"] * _shield_factor(parts, enemy, me)
+    return damage
+
+
+def buff_gain(me, o, reference, enemy, tp=None, switch=0, shoot_now=True,
+              cast_step=0, steps=None):
+    """Valeur d'un buff : écart de PV restants entre la branche « buffée »
+    et la branche « sans buff », sur l'horizon simulé.
+
+    - 0 si l'ennemi meurt dans les deux branches : une cible faible se
+      TUE, elle ne se buff pas (le buff ne serait qu'un tir perdu) ;
+    - l'horizon est la durée du buff (`parts["buff_turns"]`) : le tour
+      courant plus les tours suivants ;
+    - le buff consomme des PT : il peut repousser un tir ;
+    - `shoot_now` = False : on ne tire pas au tour courant (l'ennemi est
+      hors de portée), le buff n'amplifiera que les tours suivants ;
+    - `cast_step` : tour où le buff est joué (0 = ce tour, 1 = l'ouverture
+      du tour suivant) ;
+    - `steps` : longueur de l'horizon simulé (par défaut : la durée du
+      buff à partir du tour où il est joué).
+
+    La valeur est exprimée en PV retirés à l'ennemi : elle est donc
+    directement comparable aux dégâts d'une attaque.
+    """
+    if reference == None:
+        return 0.0
+    parts = o["parts"]
+    cost = o["cost"]
+    shot_cost = reference["cost"]
+    if shot_cost <= 0:
+        return 0.0
+    if tp is None:
+        tp = me.tp
+    if cost > tp:
+        return 0.0
+    if reference["parts"]["kill"]:
+        return 0.0  # l'arme exécute : le buff n'apporte rien
+    damage = analysis_lib.raw_damage(reference["parts"], enemy, me)
     if damage <= 0:
-        return 0
-    boost = buff_option["parts"]["buff_strength"]
-    amplified = damage * (100 + me.strength + boost) / (100 + me.strength)
+        return 0.0
+    # Un buff sans durée agit immédiatement (et ne dure pas) : on le
+    # compte comme actif au tour où il est joué.
+    duration = max(1, parts["buff_turns"])
+    if steps == None:
+        steps = duration + cast_step
+    boosted = buffed_damage(me, parts, damage, enemy)
+    extra_tp = parts["buff_tp"]
+    cap_now = analysis_lib.remaining_uses(reference["obj"], me)
+    cap_next = analysis_lib.max_uses(reference["obj"])
 
-    # Tour courant : le buff peut nous coûter un tir.
-    value = shots_with * amplified - shots_without * damage
+    hp_plain = enemy.life
+    hp_buffed = enemy.life
+    for step in range(steps):
+        active = cast_step <= step < cast_step + duration
+        if step == 0:
+            budget_plain = tp - switch
+            budget_buffed = budget_plain - (cost if cast_step == 0 else 0)
+            cap_plain = cap_now
+        else:
+            # Tours suivants : PT pleins, arme déjà équipée, compteur
+            # d'utilisations remis à zéro.
+            budget_plain = me.maxTP
+            budget_buffed = me.maxTP + (extra_tp if active else 0)
+            if cast_step == step:
+                budget_buffed -= cost
+            cap_plain = cap_next
+        if step == 0 and not shoot_now:
+            shots_plain = 0
+            shots_buffed = 0
+        else:
+            shots_plain = _shots(budget_plain, shot_cost, cap_plain)
+            shots_buffed = _shots(budget_buffed, shot_cost, cap_plain)
+        hp_plain = max(0.0, hp_plain - shots_plain * damage)
+        hp_buffed = max(0.0, hp_buffed - shots_buffed
+                        * (boosted if active else damage))
+        if hp_plain <= 0 and hp_buffed <= 0:
+            # L'ennemi meurt dans les deux branches : le buff ne change
+            # rien à l'issue du combat, on tue et on garde nos PT.
+            return 0.0
+    return max(0.0, hp_plain - hp_buffed)
 
-    # Tours suivants : le buff reste actif. Au tour suivant, l'arme est
-    # déjà équipée (pas de PT d'équipement) et les PT sont pleins.
-    extra_turns = buff_option["parts"]["buff_turns"] - 1
-    if extra_turns > 0 and reference["cost"] > 0:
-        next_shots = int(me.tp / reference["cost"])
-        if cap is not None:
-            next_shots = min(next_shots, cap)
-        if next_shots > 0:
-            extra = next_shots * extra_turns * (amplified - damage)
-            remaining = enemy.life - shots_with * amplified
-            if extra > remaining:
-                extra = remaining
-            if extra > 0:
-                value += extra
-    return value
 
+def buff_plan(me, usable, enemy):
+    """Choisit le buff à jouer en ouverture de tour.
 
-def strength_buff_plan(me, usable, enemy):
-    # Sur un build "force", le buff de force doit partir AVANT les tirs :
-    # il multiplie tous les tirs suivants du tour.
-    #
-    # Renvoie (option de buff, gain de dégâts estimé) ou (None, 0).
+    Sur un build "force", le buff part AVANT les tirs : il multiplie tous
+    les tirs du tour et des tours suivants.
+
+    Renvoie (option de buff, gain de dégâts estimé) ou (None, 0).
+    """
     reference = best_attack_now(me, usable, enemy)
     if reference == None:
         return None, 0
     best = None
-    best_gain = 0
+    best_gain = 0.0
     for o in usable:
         if o["kind"] != "chip" or o["used"]:
             continue
-        if not o["is_buff"] or o["parts"]["buff_strength"] <= 0:
+        if not o["is_buff"]:
             continue
+        if buff_still_active(o):
+            continue  # un buff de ce type est encore actif
         if o["cost"] > me.tp:
             continue
-        gain = strength_buff_gain(me, o, reference, enemy)
+        gain = buff_gain(me, o, reference, enemy, tp=me.tp,
+                         switch=reference["switch"])
         if gain > best_gain:
             best_gain = gain
             best = o
     return best, best_gain
+
+
+def prep_buff(me, enemy):
+    """Buff « un tour avant » : on ne peut pas tirer ce tour (l'ennemi est
+    hors de portée), on lance quand même le buff pour que le tour suivant
+    soit amplifié.
+
+    On ne le fait que si c'est plus rentable que d'attendre l'ouverture du
+    tour suivant (le buff couvre alors deux tours de tir au lieu d'un) et
+    si l'on pense pouvoir tirer au tour suivant (sinon le buff expire
+    sans avoir amplifié aucun tir).
+
+    Renvoie True si un buff a été joué.
+    """
+    usable, options = build_options(me)
+    if best_attack_now(me, usable, enemy) != None:
+        return False  # on peut tirer : le buff d'ouverture s'applique
+    reference = best_attack_now(me, usable, enemy, require_range=False)
+    if reference == None:
+        return False
+    best = None
+    best_gain = 0.0
+    for o in usable:
+        if o["kind"] != "chip" or o["used"]:
+            continue
+        if not o["is_buff"]:
+            continue
+        if buff_still_active(o):
+            continue
+        if o["cost"] > me.tp:
+            continue
+        duration = max(1, o["parts"]["buff_turns"])
+        if not _shootable_during_buff(me, enemy, duration):
+            continue  # le buff expirerait sans avoir amplifié un tir
+        # Lancer maintenant : le buff n'amplifiera que les tours suivants.
+        # Attendre l'ouverture du tour suivant : le buff couvre deux tours
+        # de tir (mais il peut y repousser un).
+        # Les deux plans sont comparés sur le MÊME horizon (jusqu'à la
+        # fin de la couverture du buff lancé au tour suivant).
+        horizon = duration + 1
+        now = buff_gain(me, o, reference, enemy, tp=me.tp,
+                        switch=reference["switch"], shoot_now=False,
+                        cast_step=0, steps=horizon)
+        if now <= 0:
+            continue
+        wait = buff_gain(me, o, reference, enemy, tp=me.tp,
+                         switch=reference["switch"], shoot_now=False,
+                         cast_step=1, steps=horizon)
+        if now <= wait:
+            continue
+        if now > best_gain:
+            best_gain = now
+            best = o
+    if best == None:
+        return False
+    details = "; ".join(best["parts"]["details"])
+    logs_lib.log(f"Prep buff: {best['obj']} [{details}] "
+                 f"(~+{best_gain:.0f} dmg on the next turn)")
+    execute(me, best, enemy, 0)
+    return True
+
+
+def _shootable_during_buff(me, enemy, duration):
+    """Pourrons-nous tirer pendant que le buff est actif ?
+
+    Sinon le buff expire sans avoir amplifié un seul tir : on ne le lance
+    pas. L'ennemi se rapproche de `threat["move"]` cases par tour
+    (hypothèse du modèle de menace) : on compte sur ce rapprochement.
+    """
+    reach = 0
+    for weapon in analysis_lib.defensive_list(me, "weapons"):
+        parts = analysis_lib.analyse_equipment(me, weapon)
+        if not threat_lib.is_offensive(parts):
+            continue
+        reach = max(reach, threat_lib.item_range(weapon))
+    if reach <= 0:
+        return False
+    threat = threat_lib.enemy_threat(enemy)
+    closing = threat["move"] * max(0, duration - 1)
+    return me.cell.distance(enemy.cell) - closing <= reach
 
 
 def option_score(me, o, usable, enemy):
@@ -576,6 +756,10 @@ def execute(me, o, enemy, shot):
                      f"(strength {strength_before:g} -> {me.strength:g})")
     else:
         logs_lib.log(f"Chip: {o['obj']} -> enemy {enemy.life} HP")
+    if code >= 0 and o["is_buff"]:
+        # Le buff est joué : on note jusqu'à quand il reste actif (on ne
+        # rejoue pas un buff dont l'effet n'est pas terminé).
+        mark_buff_cast(o)
     return False, code
 
 
@@ -589,15 +773,15 @@ def attack(me, enemy):
     # que les stats affichées soient celles de départ).
     log_identity(me, all_options)
 
-    # Build "force" : le buff de force part AVANT les tirs, il multiplie
-    # tous les tirs du tour (et les suivants, si le buff dure).
-    opening_buff, buff_gain = strength_buff_plan(me, usable, enemy)
+    # Build "force" : le buff part AVANT les tirs, il multiplie tous les
+    # tirs du tour (et ceux des tours suivants, si le buff dure).
+    opening_buff, buff_gain_value = buff_plan(me, usable, enemy)
     if opening_buff != None:
         duration = opening_buff["parts"]["buff_turns"]
         duration_text = f"{duration} turn(s)" if duration > 0 else "instant"
         logs_lib.log(f"Opening buff: {opening_buff['obj']} "
                      f"(+{opening_buff['parts']['buff_strength']:.0f} strength, "
-                     f"~+{buff_gain:.0f} dmg, {duration_text})")
+                     f"~+{buff_gain_value:.0f} dmg, {duration_text})")
         execute(me, opening_buff, enemy, 0)
 
     log_report(me, usable, all_options, enemy)

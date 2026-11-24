@@ -81,6 +81,12 @@ def turn():
         decision_lib.approach(me, enemy)
         did_hit = decision_lib.attack(me, enemy)
 
+    # On n'a toujours pas pu tirer : nos PT sont inutilisés. On lance un
+    # buff "un tour avant" si c'est plus rentable que d'attendre
+    # l'ouverture du tour suivant (le tour suivant sera amplifié).
+    if not did_hit:
+        decision_lib.prep_buff(me, enemy)
+
     # Finally, optionally try to break line of sight with the enemy.
     if HIDE_AFTER_ATTACK:
         decision_lib.hide(me, enemy)
