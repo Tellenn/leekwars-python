@@ -70,6 +70,7 @@ libs/analysis_lib.py    parsing d'équipement → dégâts/soins/buffs attendus
 libs/decision_lib.py    options possibles, scoring value/TP, exécution du plan
 libs/equipment_lib.py   choix de l'arme de départ
 libs/logs_lib.py        écriture dans le journal de combat (Debug.log)
+libs/threat_lib.py      portée ennemie (arme + PM) → zone de menace, plan de placement
 ```
 
 ### Profil de jeu : DPS brut
@@ -101,7 +102,15 @@ Conséquences sur le code :
   l'autre (`decision_lib.begin_turn()` compare nos PV de la fin du tour
   précédent à nos PV actuels). Un bouclier n'est joué que s'il évite la
   mort (`MANDATORY`) ou s'il achète un tour de survie alors qu'on perd le
-  combat ; sinon il vaut 0 et l'IA garde le tempo offensif.
+  combat ; sinon il vaut 0 et l'IA garde le tempo offensif ;
+- la **portée de l'ennemi est modélisée** (`libs/threat_lib.py`) : sa zone
+  de menace est le disque de rayon `portée de son arme + ses PM` centré sur
+  sa case. Quand on ne peut pas le toucher, on se place **hors de cette
+  zone** : il ne pourra pas nous toucher même après son déplacement, et on
+  le touche au tour suivant (on garde l'initiative). Ce plan n'existe que
+  si **notre portée domine la sienne** — sinon rester hors de sa portée
+  condamnerait le combat, et l'IA reste offensive (rapprochement simple).
+  Le modèle ne vaut qu'en **1c1** (`threat_lib.single_enemy()`).
 
 Flux d'un tour (`ai.turn()`) :
 
@@ -113,10 +122,14 @@ Flux d'un tour (`ai.turn()`) :
    puis boucle : on **re-score** toutes les options à chaque itération (les
    PV, les PT et les boucliers changent), on exécute la meilleure (attaque /
    soin / buff / bouclier), on mesure les dégâts réels vs attendus.
-5. Si rien n'était à portée : `me.moveToward(enemy)` puis on rejoue le
+5. Si rien n'était à portée : `decision_lib.approach()` — en 1c1 on se
+   place hors de la zone de menace de l'ennemi (`threat_lib.kite_distance()`),
+   sinon on se rapproche (`me.moveToward(enemy)`) ; puis on rejoue le
    calcul (la rentabilité change avec la distance).
 6. `decision_lib.hide()` — **seulement si `HIDE_AFTER_ATTACK`** (par défaut
-   on ne fuit pas : Kepo est un DPS).
+   on ne fuit pas : Kepo est un DPS). La fuite est **sautee** si l'ennemi
+   ne peut pas nous atteindre (hors de sa zone de menace) : elle ne ferait
+   que perdre nos PM et l'initiative.
 7. `decision_lib.end_turn()` — mémorise nos PV (base de la mesure du tour
    suivant).
 
@@ -130,6 +143,7 @@ Le rapport de combat est lu après coup : il ne doit pas être noyé.
 | état | chaque tour | PV de l'ennemi, boucliers, PV manquants |
 | rentabilité | chaque tour | une ligne : `objet valeur/PT=score` par option encore jouable — pour une arme, la **valeur du tour** (tirs possibles × dégâts) et les PT **réellement dépensés** (équipement + tirs, plafonnés par `maxUses`) |
 | actions | chaque action | une ligne : tir (dégâts réels **vs dégâts attendus hors vol de vie**), refus du moteur nommé (`refused (MAX_USES)`), soin, buff, bouclier, changement d'arme |
+| positionnement | chaque repositionnement | portée ennemie + zone de menace, distance visée, distance obtenue (`Kiting:` / `Position:`) |
 
 Mécanique : `libs/logs_lib.log_once(clé, message)` n'écrit qu'une fois par
 combat (réarmé automatiquement quand le compteur de tours repart de zéro ;
@@ -249,6 +263,7 @@ Récapitulatif de l'API Python : **`docs/leekwars-api-python.md`**.
 | Armes : coût et plafond | `Item.cost` = PT par utilisation, `Item.maxUses` = utilisations **par tour** (compteur `Entity.itemUses()`), dégâts de base = `value1 + rand(0..value2)` | mesuré sur le moteur (combat de test #54910256 : pistol `cost=3`, `maxUses=4` → 4 tirs puis refus) |
 | Érosion | les dégâts subis réduisent la **vie maximum** : 5 % des dégâts classiques, 10 % du poison, +10 % sur un coup critique ; les boucliers atténuent l'érosion | `docs/encyclopedia/erosion.md` |
 | Ligne de vue | `Item.needsLos` : la plupart des armes l'exigent, 11 puces du catalogue frappent sans (trébuchet, étincelle, repiquage, picquant…) | `docs/leekwars-api-python.md` + données du jeu (`weapon/get-all`, `chip/get-all`) |
+| Distance | le moteur compte la portée avec `Cell.distance()` : **une diagonale vaut 2 cases** (`2·min(dx,dy) + |dx−dy|`) — c'est la métrique à utiliser pour toute comparaison de portée | mesuré sur le moteur (combat de test #54912618 : le fusil, portée 7, est accepté à distance 7 ; la puce, portée 5, est refusée) — **le mock utilise le chebyshev** : écart connu (cf. §8, #27) |
 
 ---
 
@@ -335,6 +350,10 @@ dans `scenarios/duel.json`).
 | 21 | Les boucliers du mock ne **expiraient jamais** (état permanent) alors que le moteur les porte sur des effets temporaires | `leekwars_api/fight.py` | **corrigé** (`_refresh_shields()` recalcule les boucliers depuis les effets actifs à chaque tour) |
 | 22 | Les puces de bouclier étaient ignorées (« no damage, no buff, no heal ») : l'IA ne modélisait ni `RELATIVE_SHIELD` ni `ABSOLUTE_SHIELD` | `libs/analysis_lib.py`, `libs/decision_lib.py` | **corrigé** (parsing + `shield_value()` ; le bouclier n'est joué que s'il évite la mort ou achète un tour de survie) |
 | 23 | L'IA ignorait la **ligne de vue** : elle tentait un tir que le moteur refusait (`INVALID_POSITION`) et perdait une action ; à l'inverse, les objets qui frappent **sans** ligne de vue (`needsLos = False`) doivent rester utilisables | `libs/analysis_lib.py` | **corrigé** (`in_range()` vérifie la ligne de vue seulement si l'objet l'exige) |
+| 24 | L'IA ne modélisait pas la **portée de l'ennemi** : elle se rapprochait toujours (`moveToward`), donc elle entrait dans sa portée et le laissait tirer en premier | `libs/threat_lib.py`, `libs/decision_lib.py` | **corrigé** (`threat_lib` : zone de menace = portée de l'arme ennemie + ses PM ; `decision_lib.approach()` se place hors de cette zone en 1c1 quand notre portée domine la sienne) |
+| 25 | La **fuite de fin de tour** partait même quand l'ennemi ne pouvait pas nous atteindre : elle jetait nos PM et annulait le positionnement « kiting » | `libs/decision_lib.py` | **corrigé** (`hide()` saute la fuite si l'ennemi est hors de sa zone de menace) |
+| 26 | Hypothèses du modèle de menace : PM de l'ennemi = `maxMP` (remis à zéro à chaque tour), ligne de vue non modélisée, puces offensives ennemies prises en compte (hypothèse prudente) | `libs/threat_lib.py` | hypothèses assumées — à confronter à un combat de test |
+| 27 | Le **mock** et le site ne mesurent pas les distances de la même façon : le mock compte les cases en chebyshev, le moteur compte une diagonale comme 2 cases (`2·min(dx,dy) + |dx−dy|`) → en local, l'IA peut croire à portée (ou hors de portée) d'une cible diagonale que le moteur traiterait autrement | `leekwars_api/rules.py`, `leekwars_api/cell.py` | **écart connu** — le code de l'IA utilise toujours `Cell.distance()` (la métrique du moteur) ; aligner le mock sur le site reste à faire |
 
 ---
 

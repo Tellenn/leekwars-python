@@ -36,7 +36,8 @@
 #      execute it (a heal wins exactly when its heal/TP ratio beats the
 #      best damage/TP ratio, as specified; heal is wisdom-amplified and
 #      clamped to missing HP)
-#   3. if nothing was in range, move closer and rerun
+#   3. if nothing was in range, reposition (1v1: stay out of the enemy's
+#      reach, even after their movement, to keep the initiative) and rerun
 #   4. optionally break line of sight (see HIDE_AFTER_ATTACK)
 
 import libs.logs_lib as logs_lib  # type: ignore
@@ -73,11 +74,11 @@ def turn():
 
     did_hit = decision_lib.attack(me, enemy)
 
-    # If nothing was in range, move closer and rerun the calculation:
-    # profitability may change once at the right distance.
+    # If nothing was in range, reposition ourselves: in 1v1 we stay out of
+    # the enemy's reach (even after their movement) so that we keep the
+    # initiative and hit them on the next turn. Otherwise we just close in.
     if not did_hit and me.mp > 0:
-        logs_lib.log("Nothing in range, moving closer and rerunning")
-        me.moveToward(enemy)
+        decision_lib.approach(me, enemy)
         did_hit = decision_lib.attack(me, enemy)
 
     # Finally, optionally try to break line of sight with the enemy.

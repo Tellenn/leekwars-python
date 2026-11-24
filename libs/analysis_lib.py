@@ -250,6 +250,11 @@ def in_range(obj, me, target):
     # ligne de vue (`Item.needsLos`), d'autres (lance-flammes, Flamme...)
     # l'exigent. Sans cette distinction, l'IA gaspille une action sur un
     # tir que le moteur refuse (ligne de vue coupée).
+    #
+    # La distance est celle de l'API (`Cell.distance()`) : c'est la
+    # métrique du moteur pour le contrôle de portée (une diagonale y
+    # compte 2 cases) — mesuré en combat de test #54912618 : le fusil
+    # (portée 7) est accepté à distance 7, la puce (portée 5) refusée.
     d = me.cell.distance(target.cell)
     if d < obj.minRange or d > obj.maxRange:
         return False

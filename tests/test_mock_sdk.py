@@ -375,6 +375,7 @@ class BuilderSignatureTest(MockSdkTestCase):
             "cell",
             "weapons",
             "chips",
+            "weapon",
             "relative_shield",
             "absolute_shield",
             "side",

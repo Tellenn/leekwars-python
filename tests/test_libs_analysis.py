@@ -312,6 +312,26 @@ class InRangeTest(unittest.TestCase):
         self.assertTrue(analysis_lib.in_range(weapon, me, close))
         self.assertFalse(analysis_lib.in_range(weapon, me, far))
 
+    def test_range_uses_the_api_distance(self):
+        # Le moteur contrôle la portée avec `Cell.distance()` (une
+        # diagonale y compte 2 cases) : l'IA doit utiliser la même
+        # métrique, sinon elle tire et se fait refuser (mesuré en combat
+        # de test #54912618 : le fusil (portée 7) accepté à distance 7,
+        # la puce (portée 5) refusée).
+        weapon = support.pistol(range_=2)
+        fight = support.make_fight(
+            me=builder.entity(cell=(0, 0)),
+            enemies=[builder.entity(cell=(2, 0))],
+        )
+        me = fight.me
+        enemy = fight.enemies[0]
+
+        # la métrique de l'API peut être plus grande que la distance
+        # droite (déplacement en diagonale) : l'IA suit l'API.
+        me.cell.distance = lambda target: 5
+
+        self.assertFalse(analysis_lib.in_range(weapon, me, enemy))
+
 
 class ConstantsTest(unittest.TestCase):
     def test_science_amplified_covers_every_science_buff(self):

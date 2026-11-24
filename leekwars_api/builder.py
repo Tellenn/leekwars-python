@@ -115,12 +115,17 @@ def entity(
     cell: Any = (0, 0),
     weapons: Iterable[Weapon] = (),
     chips: Iterable[Chip] = (),
+    weapon: Optional[Weapon] = None,
     relative_shield: float = 0,
     absolute_shield: float = 0,
     side: int = 1,
     id: Optional[int] = None,
 ) -> Entity:
-    """Construit une entité non placée (la position est posée par make_fight)."""
+    """Construit une entité non placée (la position est posée par make_fight).
+
+    `weapon` : arme déjà équipée (utile pour les ennemis : l'IA ne gère
+    que son propre équipement, pas celui des autres).
+    """
     entity_obj = Entity(
         id=id,
         name=name,
@@ -144,8 +149,14 @@ def entity(
         absolute_shield=absolute_shield,
         side=side,
     )
-    # Une entité commence sans arme en main : l'IA doit équiper (1 PT).
-    entity_obj.weapon = None
+    if weapon is not None:
+        # Un ennemi est déjà équipé : on ne lui facture pas le PT.
+        entity_obj.weapon = weapon
+        if weapon not in entity_obj.weapons:
+            entity_obj.weapons.append(weapon)
+    else:
+        # Une entité commence sans arme en main : l'IA doit équiper (1 PT).
+        entity_obj.weapon = None
     # Position souhaitée, convertie en case au moment de make_fight.
     entity_obj._cell_xy = _cell_coordinates(cell)  # type: ignore[attr-defined]
     entity_obj.cell = None

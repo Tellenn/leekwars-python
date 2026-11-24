@@ -20,15 +20,22 @@
 
 import libs.analysis_lib as analysis_lib  # type: ignore
 import libs.logs_lib as logs_lib  # type: ignore
+import libs.threat_lib as threat_lib  # type: ignore
 
 # Pyright fix: re-read the modules as "Any" (see IMPORT NOTE in Kepo_solo.py)
 analysis_lib = globals()["analysis_lib"]
 logs_lib = globals()["logs_lib"]
+threat_lib = globals()["threat_lib"]
 
 #: Utiliser les puces de bouclier (défensif). La décision reste pilotée par
 #: le modèle : le bouclier n'est joué que s'il évite la mort ou achète des
 #: tours de survie (coûteux en TP).
 USE_SHIELD_CHIPS = True
+
+#: Se placer hors de la portée de l'ennemi quand on ne peut pas le toucher
+#: (1c1) : on garde l'initiative, on touche au tour suivant, lui ne peut
+#: pas nous toucher. Voir libs/threat_lib.py.
+USE_KITING = True
 
 #: Valeur « infinie » : un bouclier qui évite la mort doit passer avant
 #: n'importe quelle autre option.
@@ -499,7 +506,10 @@ def execute(me, o, enemy, shot):
     life_before = me.life
     code = me.useChip(o["obj"], enemy if o["has_damage"] else me)
     o["used"] = True
-    if o["is_heal"]:
+    if code < 0:
+        logs_lib.log(f"Chip: {o['obj']}: refused "
+                     f"({use_code_name(code)})")
+    elif o["is_heal"]:
         logs_lib.log(f"Heal: {o['obj']} (+{me.life - life_before:.1f} HP)")
     elif o["is_shield"] and not o["has_damage"]:
         details = "; ".join(o["parts"]["details"])
@@ -562,13 +572,17 @@ def attack(me, enemy):
                 # insuffisants, ligne de vue coupée, position invalide) :
                 # l'option est inutilisable pour ce tour.
                 logs_lib.log(f"Shot #{shot} ({best['obj']}): refused "
-                             f"({use_code_name(code)})")
+                             f"({use_code_name(code)}) at distance "
+                             f"{me.cell.distance(enemy.cell)} "
+                             f"(range {best['obj'].maxRange})")
                 drop_option(best)
             elif damage_dealt > 0:
                 did_hit = True
                 gap = damage_dealt - expected
                 logs_lib.log(f"Shot #{shot} ({best['obj']}): {damage_dealt} dmg "
                              f"(expected {expected:.1f}, gap {gap:.1f}) "
+                             f"at distance {me.cell.distance(enemy.cell)} "
+                             f"(range {best['obj'].maxRange}) "
                              f"-> enemy {enemy.life} HP")
             else:
                 # Tir sans dégât : l'action a réussi (zone qui ne couvre
@@ -581,8 +595,46 @@ def attack(me, enemy):
     return did_hit
 
 
+def approach(me, enemy):
+    """Se positionne quand aucune attaque n'a été possible.
+
+    Deux comportements :
+      - 1c1 et ma portée domine celle de l'ennemi : on se place hors de
+        sa portée (même APRÈS son déplacement), pour garder l'initiative
+        (on touche au tour suivant, lui ne peut pas nous toucher) ;
+      - sinon : on se rapproche simplement (comportement historique).
+
+    Dans les deux cas le rapport est écrit : la distance visée et la
+    distance obtenue (le terrain peut empêcher d'y arriver).
+    """
+    distance, threat = threat_lib.kite_distance(me, enemy)
+    if USE_KITING and distance is not None:
+        logs_lib.log(f"Kiting: enemy reach {threat['reach']} "
+                     f"(range {threat['range']} + {threat['move']} MP), "
+                     f"my reach {threat_lib.my_reach(me)} "
+                     f"-> target distance {distance}")
+        before = me.cell.distance(enemy.cell)
+        spent = threat_lib.apply_kite(me, enemy, distance)
+        after = me.cell.distance(enemy.cell)
+        logs_lib.log(f"Position: me ({me.cell.x},{me.cell.y}) enemy "
+                     f"({enemy.cell.x},{enemy.cell.y}) | distance "
+                     f"{before} -> {after} (target {distance}), "
+                     f"{spent} MP spent")
+        return
+    logs_lib.log(f"Nothing in range: enemy reach {threat['reach']} "
+                 f"(range {threat['range']} + {threat['move']} MP), "
+                 f"my reach {threat_lib.my_reach(me)} "
+                 f"-> moving closer and rerunning")
+    me.moveToward(enemy)
+
+
 def hide(me, enemy):
     # Break line of sight by moving away (max 5 attempts).
+    if not threat_lib.in_reach(enemy, me):
+        # Hors de sa portée (même après son déplacement) : la fuite ne
+        # servirait qu'à perdre l'initiative (et nos PM).
+        logs_lib.log("Out of enemy reach: no need to hide")
+        return
     tries = 0
     while tries < 5:
         if not me.cell.lineOfSight(enemy.cell):

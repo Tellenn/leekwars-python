@@ -86,9 +86,16 @@ elle est calculée sur les dégâts réellement subis.
 `distance(target)`, `pathLength(target)`, `lineOfSight(target)`,
 `path(target)`, `onSameLine(target)`, `Cell.get(id)`.
 
-**Distance** : chebyshev (`max(|dx|, |dy|)`), convention Leek Wars (déplacement
-en 8 directions). Centralisée dans une constante `leekwars_api.RULES.distance`
-pour être modifiable.
+**Distance** : chebyshev (`max(|dx|, |dy|)`). Centralisée dans une constante
+`leekwars_api.RULES.distance` pour être modifiable.
+
+**Écart avec le site** : le moteur compte la portée avec `Cell.distance()` où
+**une diagonale vaut 2 cases** (`2·min(dx,dy) + |dx−dy|`) — mesuré en combat
+de test #54912618 : le fusil (portée 7) est accepté à distance 7, la puce
+(portée 5) est refusée au même endroit. Le mock reste en chebyshev : en local,
+l'IA peut donc croire à portée (ou hors de portée) d'une cible diagonale que
+le moteur traiterait autrement. Le code de l'IA utilise toujours
+`Cell.distance()` (la métrique du moteur), jamais une distance recalculée.
 
 **Line of sight** : approximated (pas d'obstacle par défaut → `True` ;
 `obstacle=True` sur une case bloque). Les entités ne bloquent pas la vue.
