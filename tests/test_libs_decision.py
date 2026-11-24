@@ -139,14 +139,45 @@ class OptionScoreTest(unittest.TestCase):
         self.assertEqual(value, 20)
         self.assertEqual(score, 20 / 3)
 
-    def test_heal_score_is_clamped_to_missing_life(self):
+    def test_heal_value_is_clamped_to_missing_life(self):
+        usable, options = decision_lib.build_options(self.me)
+        heal = [o for o in options if o["obj"].name == "bandage"][0]
+
+        # 50 PV manquants, soin de 30 -> 30 (l'overheal vaut 0).
+        self.assertEqual(decision_lib.heal_value(self.me, heal), 30)
+
+    def test_the_heal_is_not_scored_when_we_can_deal_more_damage(self):
+        # Le soin n'est pas une priorité : 90 dégâts de tour valent mieux
+        # que 30 PV de soin.
         usable, options = decision_lib.build_options(self.me)
         heal = [o for o in options if o["obj"].name == "bandage"][0]
 
         score, value = decision_lib.option_score(self.me, heal, usable,
                                                  self.enemy)
 
-        # 50 PV manquants, soin de 30 pour 1 PT -> 30
+        self.assertEqual(value, 30)
+        self.assertEqual(score, 0)
+
+    def test_the_heal_is_scored_when_we_cannot_deal_as_much_damage(self):
+        # Arme très faible (1 dégât par tir) : le soin est le mieux.
+        weak = builder.weapon(
+            "pistol",
+            cost=1,
+            min_range=0,
+            max_range=1,
+            features=[
+                builder.feature(
+                    Effect.DAMAGE, Effect.Target.ENEMIES, 1, 1,
+                )
+            ],
+        )
+        self.me.weapons = [weak]
+        usable, options = decision_lib.build_options(self.me)
+        heal = [o for o in options if o["obj"].name == "bandage"][0]
+
+        score, value = decision_lib.option_score(self.me, heal, usable,
+                                                 self.enemy)
+
         self.assertEqual(value, 30)
         self.assertEqual(score, 30)
 

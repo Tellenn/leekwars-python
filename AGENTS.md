@@ -86,8 +86,12 @@ Conséquences sur le code :
   tir × **nombre de tirs réellement possibles** (`weapon_uses()` : le plafond
   `maxUses` du moteur et les PT disponibles), et son score est cette valeur
   rapportée aux PT **réellement dépensés** (équipement + tirs) ;
-- un **soin** n'est choisi que si son ratio `PV/PT` bat le ratio
-  `dégâts/PT` de la meilleure attaque (le soin n'est pas une priorité) ;
+- un **soin** n'est choisi que si on **ne peut pas faire autant de
+  dégâts** : la comparaison se fait sur les **valeurs**, pas sur les
+  rapports (30 de dégâts valent mieux que 25 de soin, même si le soin est
+  moins cher en PT). Le soin ne passe donc pas devant un tir, et il ne
+  reste jouable qu'avec les PT qui ne permettent plus de tirer (ou s'il
+  **sauve notre mort** : `decision_lib.heal_saves_life()` → `MANDATORY`) ;
 - le **buff part AVANT les tirs** (`decision_lib.buff_plan()`) : il
   multiplie tous les tirs du tour et des tours suivants. Sa valeur
   (`decision_lib.buff_gain()`) est l'**écart de PV restants entre la
@@ -465,6 +469,7 @@ dans `scenarios/duel.json`).
 | 45 | La valeur d'un tour de survie reste approchée : `damage_per_turn()` estime le nombre de tirs par `TP / coût` sans tenir compte du plafond `maxUses`, et l'hypothèse « un dégât empêché = un dégât infligé » ne donne aucune valeur aux PV économisés quand le nombre de tours ne change pas | `libs/decision_lib.py` | hypothèse assumée — à confronter à un combat de test |
 | 46 | L'armure n'était posée qu'**après** avoir encaissé le coup de l'ennemi : on ne pouvait pas s'armer avant le premier contact, quand l'ennemi approche hors de notre portée | `libs/decision_lib.py`, `Kepo_solo.py` | **corrigé** — `prep_shield()` : armure « un tour avant » (comme `prep_buff()` pour les buffs) : si on ne peut pas tirer et que l'ennemi est dans sa zone de menace, on pose le bouclier pour encaisser son prochain coup protégé ; l'armure d'ouverture ne joue ce rôle que si l'on peut tirer |
 | 47 | Le rapport de combat ne montrait **pas notre propre bouclier** : impossible de vérifier après coup si un coup encaissé était protégé (ni de mesurer l'effet de l'armure) | `libs/decision_lib.py` | **corrigé** — la ligne d'état affiche `me X/Y HP (missing Z, shield R/A)` |
+| 48 | Le **soin** était choisi sur son rapport `PV/PT` : un soin bon marché (27 PV pour 2 PT) pouvait voler la place d'un tir à 45 PV, alors que faire 30 de dégâts vaut mieux que 25 de soin | `libs/decision_lib.py` | **corrigé** — le soin n'est proposé que si on ne peut pas faire autant de dégâts que le soin vaut (comparaison sur les **valeurs**, plus sur les rapports) ; exception : le soin qui **sauve notre mort** passe avant tout (`MANDATORY`) |
 
 ---
 

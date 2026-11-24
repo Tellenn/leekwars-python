@@ -10,6 +10,8 @@ import support
 
 from leekwars_api import builder
 
+import libs.decision_lib as decision_lib
+
 
 class TurnScenarioTest(unittest.TestCase):
     def test_ai_equips_a_weapon_and_shoots_the_enemy(self):
@@ -48,8 +50,35 @@ class TurnScenarioTest(unittest.TestCase):
         self.assertTrue(any("moving closer" in line for line in fight.logs))
         self.assertLess(fight.enemies[0].life, 100)
 
-    def test_ai_heals_when_the_heal_ratio_beats_the_damage_ratio(self):
-        # 40 PV de soin pour 1 PT  >  10 dégâts pour 1 PT
+    def test_ai_heals_only_when_it_cannot_deal_more_damage(self):
+        # Soin de 40 PV pour 1 PT, mais l'arme ne fait que 1 dégât par
+        # tir : on ne peut pas faire autant de dégâts que de soin, donc on
+        # soigne.
+        fight = support.make_fight(
+            me=builder.entity(
+                life=10, max_life=100, tp=10, max_tp=10, mp=10, max_mp=10,
+                cell=(0, 0),
+                weapons=[support.pistol(damage=1, cost=1)],
+                chips=[support.heal_chip(amount=40, cost=1)],
+            ),
+            enemies=[builder.entity(life=100, max_life=100, cell=(1, 0))],
+        )
+        ai = support.load_ai(fight)
+
+        ai.turn()
+
+        self.assertEqual(fight.me.life, 50)
+        heal_index = next(i for i, line in enumerate(fight.logs)
+                          if "Heal: " in line)
+        shot_index = next(i for i, line in enumerate(fight.logs)
+                          if "Shot #" in line)
+        self.assertLess(heal_index, shot_index)
+
+    def test_ai_does_not_heal_before_shooting(self):
+        # Le même soin de 40 PV, mais l'arme fait 10 dégâts par tir (90
+        # de dégâts par tour) : mieux vaut frapper que soigner. Le soin
+        # peut encore être joué à la fin du tour avec les PT restants,
+        # quand il ne reste plus assez de dégâts à faire.
         fight = support.make_fight(
             me=builder.entity(
                 life=10, max_life=100, tp=10, max_tp=10, mp=10, max_mp=10,
@@ -63,15 +92,37 @@ class TurnScenarioTest(unittest.TestCase):
 
         ai.turn()
 
-        # le soin passe en premier (meilleur ratio), l'attaque continue
-        # ensuite avec les PT restants
-        self.assertEqual(fight.me.life, 50)
         self.assertLess(fight.enemies[0].life, 100)
-        heal_index = next(i for i, line in enumerate(fight.logs)
-                          if "Heal: " in line)
         shot_index = next(i for i, line in enumerate(fight.logs)
                           if "Shot #" in line)
-        self.assertLess(heal_index, shot_index)
+        heal_index = next(i for i, line in enumerate(fight.logs)
+                          if "Heal: " in line)
+        self.assertLess(shot_index, heal_index)
+
+    def test_ai_heals_to_save_its_life(self):
+        # L'ennemi a frappé 30 PV : il nous en reste 10, le soin (40 PV)
+        # nous sauve, il passe avant tout.
+        fight = support.make_fight(
+            me=builder.entity(
+                life=40, max_life=100, tp=10, max_tp=10, mp=10, max_mp=10,
+                cell=(0, 0),
+                weapons=[support.pistol(damage=10, cost=1)],
+                chips=[support.heal_chip(amount=40, cost=1)],
+            ),
+            enemies=[builder.entity(life=100, max_life=100, cell=(1, 0))],
+        )
+        ai = support.load_ai(fight)
+        me = fight.me
+        decision_lib.begin_turn(me)
+        decision_lib.end_turn(me)
+        me.take_damage(30)  # l'ennemi nous a frappé
+        decision_lib.begin_turn(me)
+
+        ai.turn()
+
+        self.assertEqual(fight.me.life, 50)
+        self.assertTrue(any("(sauve la mort)" in line
+                            for line in fight.logs))
 
     def test_ai_prefers_the_attack_when_it_is_more_profitable(self):
         fight = support.make_fight(

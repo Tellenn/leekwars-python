@@ -793,6 +793,19 @@ def _shootable_during_buff(me, enemy, duration):
     return me.cell.distance(enemy.cell) - closing <= reach
 
 
+def heal_saves_life(me, o):
+    """Le soin nous sauve-t-il la mort au prochain coup de l'ennemi ?
+
+    Les dégâts de l'ennemi sont *mesurés* (`_INCOMING`) : on compare la
+    vie qu'il nous reste au coup qu'il va nous faire.
+    """
+    incoming = _INCOMING
+    if incoming <= 0:
+        return False
+    heal = analysis_lib.expected_heal(o["parts"], me)
+    return me.life <= incoming < me.life + heal
+
+
 def option_score(me, o, usable, enemy):
     # Common scale: value / TP (equip cost included).
     total_cost = o["cost"] + o["switch"]
@@ -804,6 +817,21 @@ def option_score(me, o, usable, enemy):
         return 0, 0  # le moteur refuserait l'action
     if o["is_heal"]:
         value = heal_value(me, o)
+        # Le soin n'est PAS une priorité : on ne soigne que si on ne
+        # peut pas faire autant de dégâts (30 de dégâts valent mieux que
+        # 25 de soin). La comparaison est sur les VALEURS, pas sur les
+        # rapports : un soin bon marché (27 PV pour 2 PT) ne doit pas
+        # voler la place d'un tir à 45 PV.
+        best = best_attack_now(me, usable, enemy)
+        if best != None:
+            damage_value = attack_value(me, best, enemy)[0]
+            if damage_value >= value:
+                if heal_saves_life(me, o):
+                    return MANDATORY, MANDATORY  # le soin nous sauve la mort
+                # On frappe : le soin ne vaut pas plus que les dégâts
+                # qu'on pourrait faire à la place (la valeur est quand
+                # même journalisée).
+                return 0, value
     elif o["is_shield"] and not o["has_damage"]:
         value = shield_value(me, o, usable, enemy)
     elif o["is_buff"]:
