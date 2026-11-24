@@ -45,7 +45,7 @@ def turn():
     # On se place à une distance connue : une fois sur la rangée de
     # l'ennemi, une fois en diagonale (les deux splits de la distance).
     index = Fight.turn
-    step = 2 + (index % 5)  # 2..6
+    step = 4 + (index % 4)  # 4..7
     if index % 2 == 0:
         target_x = enemy.cell.x + step
         target_y = enemy.cell.y
@@ -62,4 +62,5 @@ def turn():
     Debug.log(f"probe: code={code} dx={dx} dy={dy} "
               f"cheb={max(abs(dx), abs(dy))} man={abs(dx) + abs(dy)} "
               f"d2={dx * dx + dy * dy} range={pistol.maxRange} "
-              f"r2={pistol.maxRange * pistol.maxRange}")
+              f"r2={pistol.maxRange * pistol.maxRange} "
+              f"los={me.cell.lineOfSight(enemy.cell)}")
