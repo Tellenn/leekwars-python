@@ -149,8 +149,8 @@ class ScenarioTest(unittest.TestCase):
                               weapons=[builder.weapon(
                                   "pistol", cost=1, max_range=1,
                                   features=[builder.feature(
-                                      builder.Effect.DAMAGE,
-                                      builder.Effect.Target.ENEMIES,
+                                      Effect.DAMAGE,
+                                      Effect.Target.ENEMIES,
                                       10, 10)])]),
             enemies=[builder.entity(life=20, max_life=20, cell=(1, 0))],
         )
@@ -162,6 +162,9 @@ class ScenarioTest(unittest.TestCase):
 
         self.assertEqual(fight.enemies[0].life, 0)
 ```
+
+`Effect` est un **global** (installé dans `builtins` par le mock, comme le
+fait le moteur du site) : on l'utilise sans import dans les tests.
 
 Règles :
 
@@ -178,7 +181,9 @@ Règles :
 
 Snapshots locaux : `docs/encyclopedia/*.md` (source : API du site,
 `https://leekwars.com/api/encyclopedia/get/fr/<page>`).
-Stubs officiels de l'API : `docs/leekwars-api.d.ts`.
+Stubs officiels de l'API : `docs/leekwars-api.d.ts` (TypeScript) et
+`stubs/__builtins__.pyi` (Python).
+Récapitulatif de l'API Python : **`docs/leekwars-api-python.md`**.
 
 | Effet | Formule | Source |
 |---|---|---|
@@ -236,6 +241,9 @@ Le port Python communautaire `Traual/leekwars-generator-python` rejoue les
 mêmes scénarios avec la même graine : utile pour confronter le mock au
 moteur réel quand un résultat est suspect.
 
+Mode d'emploi : **`docs/local-runner.md`** (scénario de duel prêt à l'emploi
+dans `scenarios/duel.json`).
+
 ### Stubs de typage
 
 - `stubs/__builtins__.pyi` : copie des stubs Python officiels (montés en
@@ -250,17 +258,20 @@ moteur réel quand un résultat est suspect.
 
 | # | Problème | Où | Statut |
 |---|---|---|---|
-| 1 | `libs/logs_lib.py` vs import `libs.log_lib` : le code importait un module inexistant (`ImportError` sur le site) | `libs/decision_lib.py` | corrigé (import unifié sur `libs.logs_lib`) |
-| 2 | `analysis_lib.expected_damage()` lit le global `Fight.me` au lieu de l'entité passée → non testable, faux si l'entité ≠ `me` | `libs/analysis_lib.py` | à corriger |
-| 3 | `HEAL_TYPES` ignore `Effect.RAW_HEAL` (57) | `libs/constants_lib.py` | à corriger |
-| 4 | `LIFE_DAMAGE` = % des PV **du lanceur** (traité comme un montant plat) | `libs/analysis_lib.py` | à corriger |
-| 5 | `NOVA_DAMAGE` retire des **PV maximum** (traité comme des dégâts plats sur les PV courants) | `libs/analysis_lib.py` | à corriger |
-| 6 | `SCIENCE_AMPLIFIED` incomplet : il manque `BUFF_AGILITY`, `BUFF_RESISTANCE`, `BUFF_WISDOM` | `libs/constants_lib.py` | à corriger |
-| 7 | Le vol de vie (sagesse) n'est pas modélisé dans les dégâts attendus | `libs/analysis_lib.py` | à décider |
+| 1 | `libs/logs_lib.py` vs import `libs.log_lib` : le code importait un module inexistant (`ImportError` sur le site) | `libs/decision_lib.py` | **corrigé** (import unifié sur `libs.logs_lib`) |
+| 2 | `analysis_lib.expected_damage()` lisait le global `Fight.me` au lieu de l'entité passée → non testable, faux si l'entité ≠ `me` | `libs/analysis_lib.py` | **corrigé** (paramètre `attacker`, défaut `Fight.me`) |
+| 3 | `HEAL_TYPES` ignorait `Effect.RAW_HEAL` (57), qui n'est **pas** amplifié par la sagesse | `libs/constants_lib.py` | **corrigé** (bucket `heal_flat` séparé) |
+| 4 | `LIFE_DAMAGE` = % des PV **du lanceur** (traité comme un montant plat) | `libs/analysis_lib.py` | **corrigé** (conversion au parsing, avec les PV max du lanceur) |
+| 5 | `NOVA_DAMAGE` retire des **PV maximum** (traité comme des dégâts plats sur les PV courants) | `libs/analysis_lib.py` | **corrigé** (bucket `nova_raw`, amplifié par la science, ignore les boucliers) |
+| 6 | `SCIENCE_AMPLIFIED` incomplet : il manquait `BUFF_AGILITY`, `BUFF_RESISTANCE`, `BUFF_WISDOM` | `libs/constants_lib.py` | **corrigé** |
+| 7 | Le vol de vie (sagesse) n'était pas modélisé dans les dégâts attendus | `libs/analysis_lib.py` | **corrigé** (`expected_lifesteal`, ajouté à la valeur d'une attaque) |
 | 8 | `buff_value()` : hypothèse « la puissance ajoute des dégâts plats par tir » (à confirmer en jeu) | `libs/decision_lib.py` | hypothèse assumée |
-| 9 | `expected_damage` n'exclut pas la partie « flat » du multiplicateur force/crit : correct pour `DAMAGE`, à vérifier pour `LIFE_DAMAGE` | `libs/analysis_lib.py` | à corriger |
-| 10 | `main.py` appelait `turn()` à la fin du module : le moteur rejoue déjà `turn()` chaque tour → tir en double au tour 1 | `main.py` | corrigé (appel retiré) — **à confirmer au premier import sur le site** |
-| 11 | `main.py` n'est pas un nom imposé par la plateforme (le moteur exécute le fichier `aiPath` de l'IA) : c'est une convention de ce dépôt | `main.py` | à documenter |
+| 9 | `expected_damage` n'excluait pas la partie « flat » du multiplicateur force/crit | `libs/analysis_lib.py` | **corrigé** (le multiplicateur force/crit ne s'applique qu'à `amp_raw`) |
+| 10 | `main.py` appelait `turn()` à la fin du module : le moteur rejoue déjà `turn()` chaque tour → tir en double au tour 1 | `main.py` | **corrigé** (appel retiré) — **à confirmer au premier import sur le site** |
+| 11 | `main.py` n'est pas un nom imposé par la plateforme (le moteur exécute le fichier `aiPath` de l'IA) : c'est une convention de ce dépôt | `main.py` | documenté |
+| 12 | `EFFECT_KILL` valait 0 dégât dans le modèle : l'IA ne choisissait jamais une arme d'exécution | `libs/analysis_lib.py` | **corrigé** (`kill` → la valeur vaut les PV restants de la cible) |
+| 13 | Les actions dont le code de retour est négatif (`INVALID_POSITION`, `NOT_ENOUGH_TP`…) ne sont pas distinguées : l'IA suppose que l'action a réussi | `libs/decision_lib.py` | à traiter (l'option est déjà neutralisée après 0 dégât) |
+| 14 | Le mock n'applique pas le « 5 % du montant retiré » sur les PV maximum (règle du jeu sur les dégâts) | `leekwars_api/fight.py` | écart assumé (sans impact sur les décisions) |
 
 ---
 

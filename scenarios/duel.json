@@ -1,0 +1,79 @@
+{
+	"farmers": [
+		{
+			"id": 1,
+			"name": "Moissonneur",
+			"country": "fr"
+		},
+		{
+			"id": 2,
+			"name": "Test",
+			"country": "fr"
+		}
+	],
+	"teams": [
+		{
+			"id": 1,
+			"name": "IA locale"
+		},
+		{
+			"id": 2,
+			"name": "Adversaire"
+		}
+	],
+	"entities": [
+		[
+			{
+				"id": 1,
+				"ai": "main.py",
+				"name": "Moissonneur",
+				"type": 1,
+				"farmer": 1,
+				"team": 1,
+				"level": 300,
+				"life": 3000,
+				"strength": 200,
+				"agility": 150,
+				"wisdom": 100,
+				"science": 100,
+				"cores": 10,
+				"tp": 20,
+				"mp": 6,
+				"cell": 123,
+				"weapons": [37],
+				"chips": [29]
+			}
+		],
+		[
+			{
+				"id": 2,
+				"ai": "main.py",
+				"name": "Adversaire",
+				"type": 1,
+				"farmer": 2,
+				"team": 2,
+				"level": 300,
+				"life": 3000,
+				"strength": 200,
+				"agility": 150,
+				"wisdom": 100,
+				"science": 100,
+				"cores": 10,
+				"tp": 20,
+				"mp": 6,
+				"cell": 566,
+				"weapons": [37],
+				"chips": []
+			}
+		]
+	],
+	"map": {
+		"width": 17,
+		"height": 17,
+		"type": 3,
+		"obstacles": []
+	},
+	"random_seed": 1234567,
+	"max_turns": 64,
+	"max_operations_per_entity": 20000000
+}

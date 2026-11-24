@@ -16,6 +16,10 @@ logique de décision en local** grâce à un mock du SDK du jeu.
 | `tests/` | tests `unittest` (zéro dépendance) |
 | `docs/encyclopedia/` | snapshot local de l'encyclopédie FR (formules du jeu) |
 | `docs/leekwars-api.d.ts` | stubs TypeScript officiels de l'API Leek Wars |
+| `docs/leekwars-api-python.md` | récapitulatif de l'API Python (Fonctions, effets, codes retour) |
+| `docs/local-runner.md` | rejouer l'IA dans le moteur officiel (générateur open source) |
+| `scenarios/duel.json` | scénario de duel pour le générateur officiel |
+| `stubs/` | stubs Python officiels (`__builtins__.pyi`) pour `pyright` |
 | `tools/` | scripts d'outillage (build de déploiement, sync de la doc) |
 
 ## Démarrage rapide
