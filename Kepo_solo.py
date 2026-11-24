@@ -44,11 +44,13 @@ import libs.equipment_lib as equipment_lib  # type: ignore
 import libs.decision_lib as decision_lib  # type: ignore
 
 # Comportement de fin de tour.
-#   True  : on tire puis on fuit (casse la ligne de vue) — comportement
-#           "shoot and hide", utile tant que le build n'a pas de protection.
-#   False : DPS pur — on reste à portée et on garde le tempo offensif.
-# Bascule ici quand le build de Kepo gagne en protection.
-HIDE_AFTER_ATTACK = True
+#   False : DPS pur (défaut) — on reste à portée et on garde le tempo
+#           offensif. C'est le choix de Kepo : build centré sur la force,
+#           la protection viendra plus tard.
+#   True  : comportement "shoot and hide" — on tire puis on fuit (casse la
+#           ligne de vue). Utile si le build perd des PV plus vite qu'il
+#           n'en inflige.
+HIDE_AFTER_ATTACK = False
 
 me = Fight.me
 

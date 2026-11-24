@@ -83,25 +83,27 @@ Conséquences sur le code :
   − boucliers ennemi) ;
 - un **soin** n'est choisi que si son ratio `PV/PT` bat le ratio
   `dégâts/PT` de la meilleure attaque (le soin n'est pas une priorité) ;
-- les **buffs de force** sont valorisés : ils multiplient tous les tirs
-  suivants du tour (`buff_value()`) ;
+- le **buff de force part AVANT les tirs** (`strength_buff_plan()`) : il
+  multiplie tous les tirs du tour. Il n'est lancé que si le total de dégâts
+  avec buff dépasse le total sans buff (le buff peut repousser un tir) ;
 - la **fuite de fin de tour** est optionnelle : `HIDE_AFTER_ATTACK` dans
-  `Kepo_solo.py`. `True` = comportement « shoot and hide » (utile tant que
-  le build n'a pas de protection) ; `False` = DPS pur, on garde le tempo
-  offensif. Un test verrouille les deux comportements.
+  `Kepo_solo.py`. `False` (défaut) = DPS pur, on garde le tempo offensif ;
+  `True` = comportement « shoot and hide ». Un test verrouille les deux
+  comportements.
 
 Flux d'un tour (`ai.turn()`) :
 
 1. `Fight.getNearestEnemy()` — pas d'ennemi → sortie.
 2. `equipment_lib.equip_starting_weapon()` — équipe la meilleure arme
    (ratio dégâts/PT) si aucune n'est en main.
-3. `decision_lib.attack()` — boucle : on **re-score** toutes les options à
-   chaque itération (les PV, les PT et les boucliers changent), on exécute la
-   meilleure (attaque / soin / buff), on mesure les dégâts réels vs
-   attendus.
+3. `decision_lib.attack()` — **buff de force d'abord** (s'il est rentable),
+   puis boucle : on **re-score** toutes les options à chaque itération (les
+   PV, les PT et les boucliers changent), on exécute la meilleure (attaque /
+   soin / buff), on mesure les dégâts réels vs attendus.
 4. Si rien n'était à portée : `me.moveToward(enemy)` puis on rejoue le
    calcul (la rentabilité change avec la distance).
-5. `decision_lib.hide()` — on tente de casser la ligne de vue.
+5. `decision_lib.hide()` — **seulement si `HIDE_AFTER_ATTACK`** (par défaut
+   on ne fuit pas : Kepo est un DPS).
 
 **Échelle de décision** : tout est comparé en `valeur / PT`
 (le coût d'équipement d'une arme — 1 PT — est inclus dans le ratio) :
@@ -291,8 +293,8 @@ dans `scenarios/duel.json`).
 | 13 | Les actions dont le code de retour est négatif (`INVALID_POSITION`, `NOT_ENOUGH_TP`…) ne sont pas distinguées : l'IA suppose que l'action a réussi | `libs/decision_lib.py` | à traiter (l'option est déjà neutralisée après 0 dégât ; le mock expose désormais les codes officiels) |
 | 14 | Le mock n'applique pas le « 5 % du montant retiré » sur les PV maximum (règle du jeu sur les dégâts) | `leekwars_api/fight.py` | écart assumé (sans impact sur les décisions) |
 | 15 | `useChip(chip)` sans cible : une puce à dégâts visait la case du lanceur et ne touchait jamais l'ennemi | `libs/decision_lib.py` | **corrigé** (cible explicite : l'ennemi pour une puce à dégâts, le lanceur sinon) |
-| 16 | Sur un build **force**, le buff de force devrait être lancé **avant** les tirs (il multiplie tous les tirs suivants) ; le scoring actuel le traite comme une option concurrente des attaques, sur un horizon d'un seul tour | `libs/decision_lib.py` | à traiter (hypothèse : tester l'ordre « buff d'abord » sur l'arène) |
-| 17 | La fuite de fin de tour (`HIDE_AFTER_ATTACK`) est activée par défaut : pour un DPS pur, elle coûte du tempo | `Kepo_solo.py` | assumé — à basculer à `False` quand le build aura de la protection |
+| 16 | Sur un build **force**, le buff de force devrait être lancé **avant** les tirs (il multiplie tous les tirs suivants) ; le scoring actuel le traite comme une option concurrente des attaques, sur un horizon d'un seul tour | `libs/decision_lib.py` | **corrigé** (`strength_buff_plan()` : le buff de force ouvre le tour s'il améliore le total de dégâts du tour) |
+| 17 | La fuite de fin de tour (`HIDE_AFTER_ATTACK`) est désactivée par défaut : choix « DPS pur » | `Kepo_solo.py` | assumé — à réactiver si le build commence à lose des PV plus vite qu'il n'en inflige |
 
 ---
 

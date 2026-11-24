@@ -127,6 +127,53 @@ def heal_value(me, o):
     return heal
 
 
+def strength_buff_gain(me, buff_option, reference, enemy):
+    # Gain de dégâts apporté par un buff de force lancé AVANT les tirs.
+    #
+    # Sans buff :   shots_without * dégâts_par_tir
+    # Avec buff :   shots_with    * dégâts_par_tir_amplifié
+    #
+    # Le buff consomme des PT : il peut repousser un tir. Il ne vaut le coup
+    # que si le total avec buff dépasse le total sans buff.
+    attack_cost = reference["cost"] + reference["switch"]
+    if attack_cost <= 0:
+        return 0
+    shots_without = int(me.tp / attack_cost)
+    shots_with = int((me.tp - buff_option["cost"]) / attack_cost)
+    if shots_with <= 0:
+        return 0  # le buff supprimerait tous les tirs
+    damage = analysis_lib.expected_damage(reference["parts"], enemy, me)
+    if damage <= 0:
+        return 0
+    boost = buff_option["parts"]["buff_strength"]
+    amplified = damage * (100 + me.strength + boost) / (100 + me.strength)
+    return shots_with * amplified - shots_without * damage
+
+
+def strength_buff_plan(me, usable, enemy):
+    # Sur un build "force", le buff de force doit partir AVANT les tirs :
+    # il multiplie tous les tirs suivants du tour.
+    #
+    # Renvoie (option de buff, gain de dégâts estimé) ou (None, 0).
+    reference = best_attack_now(me, usable, enemy)
+    if reference == None:
+        return None, 0
+    best = None
+    best_gain = 0
+    for o in usable:
+        if o["kind"] != "chip" or o["used"]:
+            continue
+        if not o["is_buff"] or o["parts"]["buff_strength"] <= 0:
+            continue
+        if o["cost"] > me.tp:
+            continue
+        gain = strength_buff_gain(me, o, reference, enemy)
+        if gain > best_gain:
+            best_gain = gain
+            best = o
+    return best, best_gain
+
+
 def option_score(me, o, usable, enemy):
     # Common scale: value / TP (equip cost included).
     total_cost = o["cost"] + o["switch"]
@@ -215,6 +262,16 @@ def attack(me, enemy):
     # when its heal/TP ratio beats the best damage/TP ratio) and execute it.
     # Real vs expected damage is measured after each shot.
     usable, all_options = build_options(me)
+
+    # Build "force" : le buff de force part AVANT les tirs, il multiplie
+    # tous les tirs du tour (et les suivants, si le buff dure).
+    opening_buff, buff_gain = strength_buff_plan(me, usable, enemy)
+    if opening_buff != None:
+        logs_lib.log(f"Opening with the strength buff {opening_buff['obj']} "
+                     f"(+{opening_buff['parts']['buff_strength']} strength, "
+                     f"estimated gain {buff_gain} damage this turn)")
+        execute(me, opening_buff, enemy, 0)
+
     log_report(me, usable, all_options, enemy)
     did_hit = False
     shot = 0

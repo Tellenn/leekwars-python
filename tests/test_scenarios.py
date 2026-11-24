@@ -118,6 +118,7 @@ class TurnScenarioTest(unittest.TestCase):
             enemies=[builder.entity(life=100, max_life=100, cell=(1, 0))],
         )
         ai = support.load_ai(fight)
+        ai.HIDE_AFTER_ATTACK = True
 
         ai.turn()
 
@@ -155,6 +156,49 @@ class TurnScenarioTest(unittest.TestCase):
         # (1 dégât pour 3 PT) -> elle est utilisée sur l'ennemi
         self.assertLessEqual(fight.enemies[0].life, 88)
         self.assertTrue(any("Casting chip" in line for line in fight.logs))
+
+    def test_ai_casts_the_strength_buff_before_shooting(self):
+        # Build force : le buff de force part en premier, il amplifie tous
+        # les tirs du tour.
+        fight = support.make_fight(
+            me=builder.entity(
+                life=100, max_life=100, tp=10, max_tp=10, mp=10, max_mp=10,
+                strength=100, cell=(0, 0),
+                weapons=[support.pistol(damage=10, cost=1)],
+                chips=[support.strength_chip(amount=100, cost=1)],
+            ),
+            enemies=[builder.entity(life=500, max_life=500, cell=(1, 0))],
+        )
+        ai = support.load_ai(fight)
+
+        ai.turn()
+
+        buff_index = next(i for i, line in enumerate(fight.logs)
+                          if "Casting buff chip" in line)
+        shot_index = next(i for i, line in enumerate(fight.logs)
+                          if "Shot #" in line)
+        self.assertLess(buff_index, shot_index)
+        # la force augmentée est prise en compte dans les tirs suivants
+        self.assertEqual(fight.me.strength, 200)
+
+    def test_ai_does_not_cast_a_strength_buff_that_would_replace_the_shots(self):
+        # 1 PT de buff, 1 PT par tir : le buff supprimerait tous les tirs.
+        fight = support.make_fight(
+            me=builder.entity(
+                life=100, max_life=100, tp=2, max_tp=2, mp=10, max_mp=10,
+                strength=100, cell=(0, 0),
+                weapons=[support.pistol(damage=10, cost=1)],
+                chips=[support.strength_chip(amount=100, cost=1)],
+            ),
+            enemies=[builder.entity(life=500, max_life=500, cell=(1, 0))],
+        )
+        ai = support.load_ai(fight)
+
+        ai.turn()
+
+        self.assertEqual(fight.me.strength, 100)
+        self.assertFalse(any("Casting buff chip" in line
+                             for line in fight.logs))
 
     def test_ai_can_stay_in_range_instead_of_fleeing(self):
         # Kepo_solo est un DPS brut : la fuite de fin de tour est optionnelle
