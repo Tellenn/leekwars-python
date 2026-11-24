@@ -327,9 +327,11 @@ class TurnScenarioTest(unittest.TestCase):
 class KitingScenarioTest(unittest.TestCase):
     """Positionnement « kiting » : hors de la portée de l'ennemi (1c1)."""
 
-    def test_ai_stays_out_of_the_enemy_reach_when_it_cannot_attack(self):
+    def test_ai_engages_instead_of_camping_out_of_the_enemy_reach(self):
         # Ma portée (3) domine celle de l'ennemi (1) : sa zone de menace
-        # est portée + ses 6 PM = 7 cases -> je me place à 8 cases.
+        # est portée + ses 6 PM = 7 cases. Mais la zone sûre (8 cases) est
+        # HORS de ma portée : m'y parquer interdirait tout tir (match nul
+        # si l'adversaire ne bouge pas). On engage donc à portée de tir.
         fight = support.make_fight(
             me=builder.entity(
                 life=100, max_life=100, tp=10, max_tp=10, mp=10, max_mp=10,
@@ -345,14 +347,38 @@ class KitingScenarioTest(unittest.TestCase):
 
         ai.turn()
 
+        # le plan de placement annonce la distance 3 (et non 8)
+        self.assertTrue(any("target distance 3" in line
+                            for line in fight.logs))
+        # on a engagé : l'ennemi est touché
+        self.assertLess(fight.enemies[0].life, 100)
+
+    def test_ai_stays_out_of_the_enemy_reach_when_its_range_allows_it(self):
+        # Ma portée (10) domine la zone sûre (portée 1 + 6 PM + marge = 8) :
+        # je me place à 8 cases, hors de sa portée, et je tire quand même.
+        fight = support.make_fight(
+            me=builder.entity(
+                life=100, max_life=100, tp=10, max_tp=10, mp=10, max_mp=10,
+                cell=(0, 0),
+                weapons=[support.rifle(range_=10, damage=30, cost=3)],
+            ),
+            enemies=[
+                builder.entity(life=100, max_life=100, cell=(11, 0),
+                               weapon=support.pistol(range_=1), max_mp=6)
+            ],
+        )
+        ai = support.load_ai(fight)
+
+        ai.turn()
+
         distance = fight.me.cell.distance(fight.enemies[0].cell)
         self.assertEqual(distance, 8)
-        # hors de sa portée : il ne m'a pas touché, et je n'ai pas tiré
-        self.assertEqual(fight.enemies[0].life, 100)
+        # hors de sa portée : il ne m'a pas touché, et j'ai tiré
+        self.assertLess(fight.enemies[0].life, 100)
         self.assertTrue(any("Kiting:" in line for line in fight.logs))
         # la fuite de fin de tour est inutile (hors de sa portée) : les PM
-        # restants prouvent qu'elle n'a pas eu lieu.
-        self.assertEqual(fight.me.mp, 6)
+        # restants prouvent qu'elle n'a pas eu lieu (3 PM pour se placer).
+        self.assertEqual(fight.me.mp, 7)
 
     def test_ai_hits_the_enemy_from_out_of_its_reach(self):
         # Zone de menace : portée 1 + 1 PM = 2 -> distance sûre 3, et ma

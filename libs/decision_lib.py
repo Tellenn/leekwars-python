@@ -668,10 +668,11 @@ def approach(me, enemy):
     """
     distance, threat = threat_lib.kite_distance(me, enemy)
     if USE_KITING and distance is not None:
+        safe = threat.get("safe", distance)
         logs_lib.log(f"Kiting: enemy reach {threat['reach']} "
                      f"(range {threat['range']} + {threat['move']} MP), "
                      f"my reach {threat_lib.my_reach(me)} "
-                     f"-> target distance {distance}")
+                     f"-> target distance {distance} (safe {safe})")
         before = me.cell.distance(enemy.cell)
         spent = threat_lib.apply_kite(me, enemy, distance)
         after = me.cell.distance(enemy.cell)

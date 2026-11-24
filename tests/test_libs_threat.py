@@ -31,6 +31,24 @@ def _damage_chip(name="fireBall", range_=4, damage=12):
     )
 
 
+def _long_weapon(range_=10, damage=10, cost=1):
+    """Arme de longue portée (pour tester le plan de placement)."""
+    return builder.weapon(
+        "longbow",
+        cost=cost,
+        min_range=0,
+        max_range=range_,
+        features=[
+            builder.feature(
+                builder.Effect.DAMAGE,
+                builder.Effect.Target.ENEMIES,
+                damage,
+                damage,
+            )
+        ],
+    )
+
+
 class ThreatModelTest(unittest.TestCase):
     def _fight(self, me=None, enemies=None):
         fight = support.make_fight(me=me, enemies=enemies)
@@ -85,8 +103,11 @@ class ThreatModelTest(unittest.TestCase):
         self.assertEqual(threat_lib.my_reach(fight.me), 3)
 
     def test_kite_distance_is_out_of_the_enemy_reach(self):
+        # ma portée (10) permet de tirer depuis la zone sûre : on s'y
+        # place (portée 1 + 6 PM = 7, marge 1 -> 8).
         fight = self._fight(
-            me=builder.entity(cell=(0, 0), weapons=[support.rifle(range_=3)]),
+            me=builder.entity(cell=(0, 0),
+                              weapons=[_long_weapon(range_=10)]),
             enemies=[
                 builder.entity(cell=(5, 0), weapon=support.pistol(range_=1),
                                max_mp=6)
@@ -97,6 +118,25 @@ class ThreatModelTest(unittest.TestCase):
         # portée 1 + 6 PM = 7 -> on se place à 8 cases
         self.assertEqual(distance, 8)
         self.assertEqual(threat["reach"], 7)
+        self.assertEqual(threat["safe"], 8)
+
+    def test_kite_distance_never_exceeds_my_own_range(self):
+        # Cas limite du match nul : la zone sûre (8) est hors de ma portée
+        # (3). Se garer là-bas interdirait tout tir : si l'adversaire ne
+        # bouge pas, le combat finit en nul. On engage donc à portée de
+        # tir.
+        fight = self._fight(
+            me=builder.entity(cell=(0, 0), weapons=[support.rifle(range_=3)]),
+            enemies=[
+                builder.entity(cell=(5, 0), weapon=support.pistol(range_=1),
+                               max_mp=6)
+            ],
+        )
+        distance, threat = threat_lib.kite_distance(fight.me, fight.enemies[0])
+
+        self.assertEqual(threat["safe"], 8)
+        self.assertEqual(distance, 3)
+        self.assertLessEqual(distance, threat_lib.my_reach(fight.me))
 
     def test_kite_is_refused_when_the_enemy_outranges_me(self):
         # rester hors de sa portée condamnerait le combat : on reste

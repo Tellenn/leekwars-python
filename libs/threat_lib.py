@@ -122,18 +122,31 @@ def kite_distance(me, enemy):
       - l'ennemi n'a rien pour me frapper (pas de menace) ;
       - ma portée ne domine pas la sienne : hors de sa portée, je ne
         pourrais plus jamais l'atteindre, on reste offensif.
+
+    La distance visée est la plus proche possible tout en restant hors de
+    la zone de menace — **sans jamais dépasser notre propre portée** : se
+    parquer hors de portée nous ferait attendre un adversaire immobile
+    jusqu'au match nul (aucun des deux ne peut plus tirer). Quand la zone
+    sûre est hors de notre portée, on engage donc (tir + échange) plutôt
+    que de camper.
     """
     threat = enemy_threat(enemy)
     if not single_enemy():
         return None, threat
     if threat["range"] <= 0:
         return None, threat
-    if my_reach(me) <= threat["range"]:
+    reach = my_reach(me)
+    if reach <= threat["range"]:
         return None, threat
     # Distance minimale hors de sa zone de menace (sa portée + ses PM) :
     # on sort de sa portée de justesse, et on touche le tour d'après
     # (après son rapprochement, la distance redevient portée + 1).
-    return threat["reach"] + SAFETY_MARGIN, threat
+    safe = threat["reach"] + SAFETY_MARGIN
+    threat["safe"] = safe
+    # ... mais on ne se parque jamais hors de notre propre portée : sinon
+    # on ne tire plus et le combat finit en match nul si l'adversaire ne
+    # bouge pas. Dans ce cas, on engage.
+    return min(safe, reach), threat
 
 
 def apply_kite(me, enemy, target_distance):
