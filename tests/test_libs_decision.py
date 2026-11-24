@@ -189,5 +189,116 @@ class AttackLoopTest(unittest.TestCase):
         self.assertTrue(any("No usable option" in line for line in fight.logs))
 
 
+class ShieldDecisionTest(unittest.TestCase):
+    """Puces de bouclier : mesure des dégâts reçus et arbitrage."""
+
+    def setUp(self):
+        decision_lib.reset_state()
+
+    def tearDown(self):
+        decision_lib.reset_state()
+
+    def _fight(self, life=100, chip=None, enemy_life=100):
+        fight = support.make_fight(
+            me=builder.entity(
+                life=life, max_life=100, tp=10, max_tp=10, mp=10, max_mp=10,
+                cell=(0, 0),
+                weapons=[support.pistol(damage=10, cost=1)],
+                chips=[chip] if chip else [],
+            ),
+            enemies=[builder.entity(life=enemy_life, max_life=enemy_life,
+                                    cell=(1, 0))],
+        )
+        install(fight)
+        return fight
+
+    def test_shield_chip_is_flagged_and_usable(self):
+        fight = self._fight(chip=support.shield_chip(relative=50))
+        usable, options = decision_lib.build_options(fight.me)
+        shield = [o for o in options if o["obj"].name == "forteresse"][0]
+
+        self.assertTrue(shield["is_shield"])
+        self.assertIn(shield, usable)
+
+    def test_incoming_damage_is_measured_between_turns(self):
+        fight = self._fight()
+        me = fight.me
+        decision_lib.begin_turn(me)
+        decision_lib.end_turn(me)
+
+        me.take_damage(40)  # l'ennemi nous frappe pendant son tour
+        incoming = decision_lib.begin_turn(me)
+
+        self.assertEqual(incoming, 40)
+
+    def test_no_shield_is_used_without_a_known_incoming_damage(self):
+        # Tour 1 : on ne sait pas encore ce que l'ennemi inflige.
+        fight = self._fight(chip=support.shield_chip(relative=50))
+        me = fight.me
+        decision_lib.begin_turn(me)
+
+        decision_lib.attack(me, fight.enemies[0])
+
+        self.assertFalse(any("Shield:" in line for line in fight.logs))
+
+    def test_shield_is_played_when_it_avoids_death(self):
+        # 5 PV restants, l'ennemi frappe 35 : sans bouclier on meurt ce tour,
+        # avec 90 % de bouclier on survit.
+        fight = self._fight(life=40, chip=support.shield_chip(relative=90))
+        me = fight.me
+        enemy = fight.enemies[0]
+        decision_lib.begin_turn(me)
+        decision_lib.end_turn(me)
+        me.take_damage(35)
+        decision_lib.begin_turn(me)
+
+        decision_lib.attack(me, enemy)
+
+        self.assertTrue(any("Shield:" in line for line in fight.logs))
+        self.assertGreater(me.relativeShield, 0)
+        self.assertTrue(me.alive)
+
+    def test_shield_is_not_played_when_we_win_without_it(self):
+        # On tue l'ennemi avant d'être mort : la survie ne vaut rien.
+        fight = self._fight(life=100, enemy_life=20,
+                            chip=support.shield_chip(relative=50))
+        me = fight.me
+        enemy = fight.enemies[0]
+        decision_lib.begin_turn(me)
+        decision_lib.end_turn(me)
+        me.take_damage(10)
+        decision_lib.begin_turn(me)
+
+        decision_lib.attack(me, enemy)
+
+        self.assertFalse(any("Shield:" in line for line in fight.logs))
+
+    def test_incoming_damage_is_reported_in_the_state_line(self):
+        fight = self._fight()
+        me = fight.me
+        decision_lib.begin_turn(me)
+        decision_lib.end_turn(me)
+        me.take_damage(12)
+        decision_lib.begin_turn(me)
+
+        decision_lib.attack(me, fight.enemies[0])
+
+        self.assertTrue(any("incoming 12" in line for line in fight.logs))
+
+    def test_a_life_saving_shield_is_reported_as_mandatory(self):
+        fight = self._fight(life=40, chip=support.shield_chip(relative=90))
+        me = fight.me
+        enemy = fight.enemies[0]
+        decision_lib.begin_turn(me)
+        decision_lib.end_turn(me)
+        me.take_damage(35)
+        decision_lib.begin_turn(me)
+
+        decision_lib.attack(me, enemy)
+
+        self.assertTrue(any("(sauve la mort)" in line
+                            for line in fight.logs))
+
+
 if __name__ == "__main__":
     unittest.main()

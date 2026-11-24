@@ -125,6 +125,56 @@ class AnalyseEquipmentTest(unittest.TestCase):
         self.assertEqual(parts["nova_raw"], 0)
 
 
+class ShieldAnalysisTest(unittest.TestCase):
+    """Boucliers (fr/Résistance) : relatif en %, absolu en montant."""
+
+    def setUp(self):
+        install(support.make_fight())
+
+    def test_relative_shield_is_parsed_with_its_duration(self):
+        parts = analysis_lib.analyse_equipment(
+            builder.entity(), support.shield_chip(relative=10, turns=3))
+
+        self.assertEqual(parts["shield_relative"], 10)
+        self.assertEqual(parts["shield_absolute"], 0)
+        self.assertEqual(parts["shield_turns"], 3)
+
+    def test_absolute_shield_is_parsed(self):
+        parts = analysis_lib.analyse_equipment(
+            builder.entity(), support.shield_chip(relative=0, absolute=25))
+
+        self.assertEqual(parts["shield_relative"], 0)
+        self.assertEqual(parts["shield_absolute"], 25)
+
+    def test_shield_is_amplified_by_resistance_but_raw_is_not(self):
+        caster = builder.entity(resistance=100)
+        amplified = analysis_lib.analyse_equipment(
+            caster, support.shield_chip(relative=10))
+        raw_chip = builder.chip(
+            "mur",
+            cost=2,
+            features=[
+                builder.feature(
+                    Effect.RAW_RELATIVE_SHIELD,
+                    Effect.Target.CASTER,
+                    10, 10, turns=2,
+                )
+            ],
+        )
+        raw = analysis_lib.analyse_equipment(caster, raw_chip)
+
+        self.assertEqual(amplified["shield_relative"], 20)  # 10 * (1 + 100/100)
+        self.assertEqual(raw["shield_relative"], 10)       # variante RAW
+
+    def test_shield_is_not_counted_as_damage_nor_as_a_buff(self):
+        parts = analysis_lib.analyse_equipment(
+            builder.entity(), support.shield_chip(relative=10))
+
+        self.assertEqual(parts["amp_raw"], 0)
+        self.assertEqual(parts["buff_strength"], 0)
+        self.assertEqual(parts["heal_raw"], 0)
+
+
 class ExpectedDamageTest(unittest.TestCase):
     """Dégâts attendus : force, crits, boucliers, nova, kill."""
 

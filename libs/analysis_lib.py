@@ -12,7 +12,8 @@
 from libs.constants_lib import (
     DAMAGE_NAMES, FORCE_AMPLIFIED, SHIELDED_FLAT, SCIENCE_DAMAGE,
     INSTANT_KILL, STRENGTH_BUFFS, POWER_BUFFS, TP_BUFFS, MP_BUFFS,
-    HEAL_TYPES, RAW_HEAL_TYPES, SCIENCE_AMPLIFIED, CRITICAL_FACTOR
+    HEAL_TYPES, RAW_HEAL_TYPES, SCIENCE_AMPLIFIED, CRITICAL_FACTOR,
+    RELATIVE_SHIELD_TYPES, ABSOLUTE_SHIELD_TYPES, SHIELD_AMPLIFIED,
 )
 
 # Shape of the parsed effects ("parts" dict), consumed by expected_* :
@@ -25,6 +26,9 @@ from libs.constants_lib import (
 #   heal_raw   : raw sum of wisdom-amplified healing
 #   heal_flat  : raw sum of non-amplified healing (EFFECT_RAW_HEAL)
 #   buff_*     : buff amounts (already science-amplified when applicable)
+#   shield_relative : % of damage blocked (fr/Résistance), 0 if none
+#   shield_absolute : flat damage blocked (fr/Résistance), 0 if none
+#   shield_turns    : duration of the shield effect (in turns)
 #   details    : human readable breakdown, used in the fight log
 
 
@@ -79,6 +83,9 @@ def analyse_equipment(entity, obj):
     buff_power = 0
     buff_tp = 0
     buff_mp = 0
+    shield_relative = 0
+    shield_absolute = 0
+    shield_turns = 0
     details = []
 
     for f in obj.features:
@@ -118,6 +125,21 @@ def analyse_equipment(entity, obj):
             elif f.type in RAW_HEAL_TYPES:
                 heal_flat += avg
                 details.append(f"raw heal: {f.minValue}-{f.maxValue}")
+            elif f.type in RELATIVE_SHIELD_TYPES + ABSOLUTE_SHIELD_TYPES:
+                # fr/Résistance : le bouclier relatif réduit un pourcentage
+                # des dégâts, le bouclier absolu un montant fixe. Les effets
+                # non RAW sont amplifiés par la résistance du lanceur.
+                amount = avg
+                if f.type in SHIELD_AMPLIFIED:
+                    amount = amount * (1 + entity.resistance / 100)
+                if f.type in RELATIVE_SHIELD_TYPES:
+                    shield_relative += amount
+                    details.append(f"+{amount:.1f}% relative shield")
+                else:
+                    shield_absolute += amount
+                    details.append(f"+{amount:.1f} absolute shield")
+                if f.turns > shield_turns:
+                    shield_turns = f.turns
             elif (f.targets & Effect.Target.CASTER) and f.type in (
                     STRENGTH_BUFFS + POWER_BUFFS + TP_BUFFS + MP_BUFFS):
                 amplified = avg * science_multiplier(entity, f.type)
@@ -139,7 +161,11 @@ def analyse_equipment(entity, obj):
         "kill": kill,
         "heal_raw": heal_raw, "heal_flat": heal_flat,
         "buff_strength": buff_strength, "buff_power": buff_power,
-        "buff_tp": buff_tp, "buff_mp": buff_mp, "details": details
+        "buff_tp": buff_tp, "buff_mp": buff_mp,
+        "shield_relative": shield_relative,
+        "shield_absolute": shield_absolute,
+        "shield_turns": shield_turns,
+        "details": details
     }
 
 

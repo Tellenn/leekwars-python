@@ -171,3 +171,23 @@ def make_fight(me=None, enemies=None, allies=None, **kwargs):
         enemies = [builder.entity(life=50, max_life=50, cell=(1, 0))]
     return builder.make_fight(me=me, enemies=enemies, allies=allies or [],
                               **kwargs)
+
+
+def shield_chip(relative=10, absolute=0, turns=2, cost=2, name="forteresse"):
+    """Puce de bouclier : effet RELATIVE_SHIELD / ABSOLUTE_SHIELD sur le
+    lanceur (fr/Résistance)."""
+    features = []
+    if relative:
+        features.append(builder.feature(
+            builder.Effect.RELATIVE_SHIELD,
+            builder.Effect.Target.CASTER | builder.Effect.Target.ALLIES,
+            relative, relative, turns=turns,
+        ))
+    if absolute:
+        features.append(builder.feature(
+            builder.Effect.ABSOLUTE_SHIELD,
+            builder.Effect.Target.CASTER | builder.Effect.Target.ALLIES,
+            absolute, absolute, turns=turns,
+        ))
+    return builder.chip(name, cost=cost, min_range=0, max_range=0,
+                        features=features)

@@ -64,6 +64,10 @@ def turn():
         logs_lib.log("No enemy detected")
         return
 
+    # Mesure des dégâts reçus pendant le tour de l'ennemi (utilisés pour
+    # décider si l'on pose un bouclier).
+    decision_lib.begin_turn(me)
+
     # Step 0: have a weapon in hand from the start
     equipment_lib.equip_starting_weapon(me, enemy)
 
@@ -79,3 +83,7 @@ def turn():
     # Finally, optionally try to break line of sight with the enemy.
     if HIDE_AFTER_ATTACK:
         decision_lib.hide(me, enemy)
+
+    # Mémorise nos PV : la différence avec le tour suivant mesurera les
+    # dégâts de l'ennemi.
+    decision_lib.end_turn(me)

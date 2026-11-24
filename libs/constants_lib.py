@@ -39,6 +39,15 @@ AGILITY_BUFFS = [Effect.BUFF_AGILITY, Effect.RAW_BUFF_AGILITY]
 RESISTANCE_BUFFS = [Effect.BUFF_RESISTANCE, Effect.RAW_BUFF_RESISTANCE]
 WISDOM_BUFFS = [Effect.BUFF_WISDOM, Effect.RAW_BUFF_WISDOM]
 
+# --- Boucliers ---
+# fr/Résistance : le bouclier relatif réduit un pourcentage des dégâts,
+# le bouclier absolu un montant fixe. Les variantes RAW_* ne sont pas
+# amplifiées par la résistance du lanceur.
+RELATIVE_SHIELD_TYPES = [Effect.RELATIVE_SHIELD, Effect.RAW_RELATIVE_SHIELD]
+ABSOLUTE_SHIELD_TYPES = [Effect.ABSOLUTE_SHIELD, Effect.RAW_ABSOLUTE_SHIELD]
+# Effets de bouclier amplifiés par la résistance du lanceur.
+SHIELD_AMPLIFIED = [Effect.RELATIVE_SHIELD, Effect.ABSOLUTE_SHIELD]
+
 # Effets amplifiés par la science (fr/Effets : "Amplifié par la science").
 # Les variantes RAW_* ne sont jamais amplifiées.
 SCIENCE_AMPLIFIED = [

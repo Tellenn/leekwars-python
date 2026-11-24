@@ -89,21 +89,32 @@ Conséquences sur le code :
 - la **fuite de fin de tour** est optionnelle : `HIDE_AFTER_ATTACK` dans
   `Kepo_solo.py`. `False` (défaut) = DPS pur, on garde le tempo offensif ;
   `True` = comportement « shoot and hide ». Un test verrouille les deux
-  comportements.
+  comportements ;
+- les **puces de bouclier** sont modélisées mais restent marginales : la
+  valeur d'un bouclier = les tours de survie qu'il achète, convertis en
+  dégâts encore infligables (`decision_lib.shield_value()`). Les dégâts
+  de l'ennemi ne sont pas modélisés : ils sont **mesurés** d'un tour à
+  l'autre (`decision_lib.begin_turn()` compare nos PV de la fin du tour
+  précédent à nos PV actuels). Un bouclier n'est joué que s'il évite la
+  mort (`MANDATORY`) ou s'il achète un tour de survie alors qu'on perd le
+  combat ; sinon il vaut 0 et l'IA garde le tempo offensif.
 
 Flux d'un tour (`ai.turn()`) :
 
 1. `Fight.getNearestEnemy()` — pas d'ennemi → sortie.
-2. `equipment_lib.equip_starting_weapon()` — équipe la meilleure arme
+2. `decision_lib.begin_turn()` — mesure des dégâts reçus au tour précédent.
+3. `equipment_lib.equip_starting_weapon()` — équipe la meilleure arme
    (ratio dégâts/PT) si aucune n'est en main.
-3. `decision_lib.attack()` — **buff de force d'abord** (s'il est rentable),
+4. `decision_lib.attack()` — **buff de force d'abord** (s'il est rentable),
    puis boucle : on **re-score** toutes les options à chaque itération (les
    PV, les PT et les boucliers changent), on exécute la meilleure (attaque /
-   soin / buff), on mesure les dégâts réels vs attendus.
-4. Si rien n'était à portée : `me.moveToward(enemy)` puis on rejoue le
+   soin / buff / bouclier), on mesure les dégâts réels vs attendus.
+5. Si rien n'était à portée : `me.moveToward(enemy)` puis on rejoue le
    calcul (la rentabilité change avec la distance).
-5. `decision_lib.hide()` — **seulement si `HIDE_AFTER_ATTACK`** (par défaut
+6. `decision_lib.hide()` — **seulement si `HIDE_AFTER_ATTACK`** (par défaut
    on ne fuit pas : Kepo est un DPS).
+7. `decision_lib.end_turn()` — mémorise nos PV (base de la mesure du tour
+   suivant).
 
 ### Politique de journal
 
@@ -231,6 +242,7 @@ Récapitulatif de l'API Python : **`docs/leekwars-api-python.md`**.
 | Vol de vie | `SoinsParVolDeVie = DegatsFinaux * Sagesse / 1000` | `docs/encyclopedia/vol_de_vie.md` |
 | Science | amplifie les buffs `BUFF_*` (pas les `RAW_*`) | `docs/encyclopedia/effets.md` |
 | Effets | 59 types + masques de cibles (`ENEMIES=1`, `ALLIES=2`, `CASTER=4`, `NON_SUMMONS=8`, `SUMMONS=16`) | `docs/encyclopedia/effets.md` |
+| Armes : coût et plafond | `Item.cost` = PT par utilisation, `Item.maxUses` = utilisations **par tour** (compteur `Entity.itemUses()`), dégâts de base = `value1 + rand(0..value2)` | mesuré sur le moteur (combat de test #54910256 : pistol `cost=3`, `maxUses=4` → 4 tirs puis refus) |
 
 ---
 
@@ -311,6 +323,11 @@ dans `scenarios/duel.json`).
 | 15 | `useChip(chip)` sans cible : une puce à dégâts visait la case du lanceur et ne touchait jamais l'ennemi | `libs/decision_lib.py` | **corrigé** (cible explicite : l'ennemi pour une puce à dégâts, le lanceur sinon) |
 | 16 | Sur un build **force**, le buff de force devrait être lancé **avant** les tirs (il multiplie tous les tirs suivants) ; le scoring actuel le traite comme une option concurrente des attaques, sur un horizon d'un seul tour | `libs/decision_lib.py` | **corrigé** (`strength_buff_plan()` : le buff de force ouvre le tour s'il améliore le total de dégâts du tour) |
 | 17 | La fuite de fin de tour (`HIDE_AFTER_ATTACK`) est désactivée par défaut : choix « DPS pur » | `Kepo_solo.py` | assumé — à réactiver si le build commence à lose des PV plus vite qu'il n'en inflige |
+| 18 | Le plafond d'utilisations d'une arme par tour (`Item.maxUses`, compteur `Entity.itemUses()`) n'est pas modélisé : l'IA tente une utilisation de trop, le moteur la refuse (0 dégât, « option dropped ») et 8 à 11 PT restent inutilisés | `libs/decision_lib.py` | à traiter (vérifié sur le moteur : `cost` = PT par tir, `maxUses` = tirs par tour — ex. pistol 3 PT / 4 tirs) |
+| 19 | Le « expected » affiché dans le journal des tirs mélange dégâts et **vol de vie** (sagesse 100 → +10 %) : le « gap » est biaisé du vol de vie | `libs/decision_lib.py` | à traiter (le modèle est juste : 54.9 dégâts attendus vs 54.4 observés sur un vrai combat) |
+| 20 | Le moteur **réduit les PV maximum** quand on perd de la vie (3000 → 2958 → 2918 → 2819 sur le combat de test) ; le mock garde `maxLife` constant | `leekwars_api/fight.py` | écart assumé (le mock n'a pas la règle « 5 % du montant retiré ») |
+| 21 | Les boucliers du mock ne **expiraient jamais** (état permanent) alors que le moteur les porte sur des effets temporaires | `leekwars_api/fight.py` | **corrigé** (`_refresh_shields()` recalcule les boucliers depuis les effets actifs à chaque tour) |
+| 22 | Les puces de bouclier étaient ignorées (« no damage, no buff, no heal ») : l'IA ne modélisait ni `RELATIVE_SHIELD` ni `ABSOLUTE_SHIELD` | `libs/analysis_lib.py`, `libs/decision_lib.py` | **corrigé** (parsing + `shield_value()` ; le bouclier n'est joué que s'il évite la mort ou achète un tour de survie) |
 
 ---
 

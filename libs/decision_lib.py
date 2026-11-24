@@ -8,6 +8,8 @@
 #               (a heal beats an attack only if its TP ratio is higher,
 #                exactly as requested; overheal counts for 0)
 #   - buff    : estimated extra damage it enables / TP
+#   - shield  : survival gained, valued as the damage we could still deal
+#               in the extra turns of life it buys (see shield_value)
 #
 # All libraries live in the "libs" folder of the Leek Wars drive: use
 # absolute package imports (libs.xxx).
@@ -22,6 +24,51 @@ import libs.logs_lib as logs_lib  # type: ignore
 # Pyright fix: re-read the modules as "Any" (see IMPORT NOTE in Kepo_solo.py)
 analysis_lib = globals()["analysis_lib"]
 logs_lib = globals()["logs_lib"]
+
+#: Utiliser les puces de bouclier (défensif). La décision reste pilotée par
+#: le modèle : le bouclier n'est joué que s'il évite la mort ou achète des
+#: tours de survie (coûteux en TP).
+USE_SHIELD_CHIPS = True
+
+#: Valeur « infinie » : un bouclier qui évite la mort doit passer avant
+#: n'importe quelle autre option.
+MANDATORY = 1e9
+
+# --- État du combat -------------------------------------------------------
+# Le corps du module n'est évalué qu'une fois : ces variables persistent
+# d'un tour à l'autre (cf. AGENTS.md §7).
+#
+# _LAST_LIFE     : nos PV à la fin de notre tour précédent.
+# _INCOMING      : dégâts subis pendant le tour de l'ennemi (mesure).
+_LAST_LIFE = None
+_INCOMING = 0.0
+
+
+def begin_turn(me):
+    """Mesure les dégâts reçus depuis la fin de notre tour précédent.
+
+    L'IA ne modélise pas les dégâts de l'ennemi : on les *observe*. Au
+    début d'un tour, la différence entre nos PV de la fin du tour
+    précédent et nos PV actuels est ce que l'ennemi nous a coûté.
+    """
+    global _INCOMING
+    if _LAST_LIFE is not None:
+        taken = _LAST_LIFE - me.life
+        _INCOMING = taken if taken > 0 else 0.0
+    return _INCOMING
+
+
+def end_turn(me):
+    """Mémorise nos PV à la fin du tour (base de mesure du tour suivant)."""
+    global _LAST_LIFE
+    _LAST_LIFE = me.life
+
+
+def reset_state():
+    """Oublie l'historique du combat (nouveau combat, tests)."""
+    global _LAST_LIFE, _INCOMING
+    _LAST_LIFE = None
+    _INCOMING = 0.0
 
 
 def build_options(me):
@@ -39,7 +86,7 @@ def build_options(me):
             "switch": sw, "parts": parts, "used": False,
             "has_damage": parts["amp_raw"] > 0 or parts["flat_sub"] > 0
                           or parts["nova_raw"] > 0 or parts["kill"],
-            "is_buff": False, "is_heal": False
+            "is_buff": False, "is_heal": False, "is_shield": False
         })
     for chip in analysis_lib.defensive_list(me, "chips"):
         parts = analysis_lib.analyse_equipment(me, chip)
@@ -51,12 +98,14 @@ def build_options(me):
             "has_damage": parts["amp_raw"] > 0 or parts["flat_sub"] > 0
                           or parts["nova_raw"] > 0 or parts["kill"],
             "is_buff": has_buff,
-            "is_heal": parts["heal_raw"] > 0
+            "is_heal": parts["heal_raw"] > 0,
+            "is_shield": parts["shield_relative"] > 0
+                         or parts["shield_absolute"] > 0,
         })
 
     usable = []
     for o in options:
-        if o["has_damage"] or o["is_buff"] or o["is_heal"]:
+        if o["has_damage"] or o["is_buff"] or o["is_heal"] or o["is_shield"]:
             usable.append(o)
     return usable, options
 
@@ -127,6 +176,97 @@ def heal_value(me, o):
     return heal
 
 
+def damage_per_turn(me, usable, enemy):
+    # Dégâts que l'on peut infliger dans un tour : sert à valoriser la
+    # survie (un tour gagné = un tour de dégâts).
+    best = best_attack_now(me, usable, enemy)
+    if best == None:
+        return 0.0
+    per_shot = analysis_lib.expected_damage(best["parts"], enemy, me)
+    cost = best["cost"] + best["switch"]
+    if cost <= 0:
+        return 0.0
+    return per_shot * int(me.tp / cost)
+
+
+def blocked_damage(incoming, relative, absolute):
+    # Dégâts-stoppés par un bouclier (fr/Résistance) :
+    # bloqué = dégâts * (relatif / 100) + absolu, plafonné aux dégâts.
+    if incoming <= 0:
+        return 0.0
+    blocked = incoming * relative / 100 + absolute
+    if blocked > incoming:
+        blocked = incoming
+    return blocked
+
+
+def _ceil_div(x, y):
+    # Division entière arrondie au supérieur (x / y, y > 0).
+    if y <= 0:
+        return 999
+    k = int(x / y)
+    if x > k * y:
+        k += 1
+    return max(k, 1)
+
+
+def turns_to_death(life, incoming, blocked=0.0, duration=0):
+    # Nombre de tours avant de mourir (1 = on meurt pendant ce tour).
+    # `blocked` : dégâts-stoppés par tour tant que le bouclier tient.
+    # `duration` : durée du bouclier en tours (0 = pas de bouclier).
+    if incoming <= 0:
+        return 999
+    reduced = incoming - blocked
+    if reduced < 0:
+        reduced = 0.0
+    duration = duration if duration > 0 else 1
+    shielded_total = duration * reduced
+    if life <= shielded_total:
+        if reduced <= 0:
+            return 999
+        return _ceil_div(life, reduced)
+    return duration + _ceil_div(life - shielded_total, incoming)
+
+
+def shield_value(me, o, usable, enemy):
+    # Valeur d'une puce de bouclier, sur l'échelle "valeur / TP".
+    #
+    # On ne modélise pas les dégâts de l'ennemi : on les mesure (voir
+    # begin_turn). Le bouclier est valorisé par les tours de survie
+    # qu'il achète, convertis en dégâts que l'on pourra encore infliger.
+    #
+    # HYPOTHÈSE : 1 tour de survie supplémentaire = 1 tour de dégâts
+    # (le jeu ne donne pas de valeur absolue aux PV).
+    if not USE_SHIELD_CHIPS:
+        return 0.0
+    incoming = _INCOMING
+    if incoming <= 0:
+        return 0.0
+    parts = o["parts"]
+    blocked = blocked_damage(incoming, parts["shield_relative"],
+                              parts["shield_absolute"])
+    if blocked <= 0:
+        return 0.0
+    duration = parts["shield_turns"] if parts["shield_turns"] > 0 else 1
+    life = me.life
+    death_without = turns_to_death(life, incoming)
+    death_with = turns_to_death(life, incoming, blocked, duration)
+    extra = death_with - death_without
+    if extra <= 0:
+        return 0.0
+    # Mort imminente : le bouclier nous sauve, il passe avant tout.
+    if life <= incoming:
+        return MANDATORY
+    # Si l'on tue l'ennemi avant de mourir, la survie supplémentaire ne
+    # vaut rien : on garde le tempo offensif.
+    per_turn = damage_per_turn(me, usable, enemy)
+    if per_turn <= 0:
+        return 0.0
+    if _ceil_div(enemy.life, per_turn) <= death_without:
+        return 0.0
+    return extra * per_turn
+
+
 def strength_buff_gain(me, buff_option, reference, enemy):
     # Gain de dégâts apporté par un buff de force lancé AVANT les tirs.
     #
@@ -188,6 +328,8 @@ def option_score(me, o, usable, enemy):
         return 0, 0
     if o["is_heal"]:
         value = heal_value(me, o)
+    elif o["is_shield"] and not o["has_damage"]:
+        value = shield_value(me, o, usable, enemy)
     elif o["is_buff"]:
         value = buff_value(me, o, best_attack_now(me, usable, enemy), enemy)
     else:
@@ -219,7 +361,7 @@ def log_identity(me, options):
     ignored = []
     for o in options:
         label = str(o["obj"])
-        if o["has_damage"] or o["is_buff"] or o["is_heal"]:
+        if o["has_damage"] or o["is_buff"] or o["is_heal"] or o["is_shield"]:
             details = "; ".join(o["parts"]["details"])
             items.append(f"{label} [{details}]" if details else label)
         else:
@@ -228,7 +370,7 @@ def log_identity(me, options):
         logs_lib.log_once("items", "Items: " + " ; ".join(items))
     if ignored:
         logs_lib.log_once("ignored",
-                          "Ignored (no damage, no buff, no heal): "
+                          "Ignored (no damage, no buff, no heal, no shield): "
                           + ", ".join(ignored))
 
 
@@ -239,9 +381,12 @@ def log_report(me, usable, options, enemy):
         return
 
     rel, absolu = analysis_lib.shields(enemy)
+    incoming = _INCOMING
+    incoming_text = f" | incoming {incoming:.0f}" if incoming > 0 else ""
     logs_lib.log(f"Enemy {enemy.life} HP (shields {rel}/{absolu}) | "
                  f"me {me.life}/{me.maxLife} HP "
-                 f"(missing {analysis_lib.missing_life(me)})")
+                 f"(missing {analysis_lib.missing_life(me)})"
+                 f"{incoming_text}")
 
     lines = []
     for o in usable:
@@ -251,7 +396,10 @@ def log_report(me, usable, options, enemy):
         if o["kind"] == "chip" and o["used"]:
             continue  # puce déjà jouée ce tour : plus une option
         score, value = option_score(me, o, usable, enemy)
-        lines.append(f"{o['obj']} {value:.1f}/{total_cost}TP={score:.1f}")
+        if value >= MANDATORY:
+            lines.append(f"{o['obj']} (sauve la mort)/{total_cost}TP=inf")
+        else:
+            lines.append(f"{o['obj']} {value:.1f}/{total_cost}TP={score:.1f}")
     logs_lib.log("Profitability: " + (" ; ".join(lines) if lines else "none"))
 
 
@@ -273,6 +421,9 @@ def execute(me, o, enemy, shot):
     o["used"] = True
     if o["is_heal"]:
         logs_lib.log(f"Heal: {o['obj']} (+{me.life - life_before:.1f} HP)")
+    elif o["is_shield"] and not o["has_damage"]:
+        details = "; ".join(o["parts"]["details"])
+        logs_lib.log(f"Shield: {o['obj']} [{details}]")
     elif o["is_buff"]:
         details = "; ".join(o["parts"]["details"])
         logs_lib.log(f"Buff: {o['obj']} [{details}]")

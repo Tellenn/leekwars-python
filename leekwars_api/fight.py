@@ -455,8 +455,39 @@ class Fight:
                 if effect.turns > 0:
                     kept.append(effect)
             entity.effects = kept
+            # Les boucliers sont portés par des effets temporaires : ils
+            # expirent avec eux (fr/Résistance).
+            self._refresh_shields(entity)
         self._item_uses.clear()
         return self.turn
+
+    @staticmethod
+    def _refresh_shields(entity) -> None:
+        """Recalcule les boucliers d'une entité depuis ses effets actifs.
+
+        Les boucliers ne sont pas un état permanent : ils viennent des
+        effets (puce de bouclier), dont la durée est en tours.
+        """
+        relative = 0.0
+        absolute = 0.0
+        for effect in entity.effects:
+            caster = effect.caster
+            resistance = getattr(caster, "resistance", 0) if caster else 0
+            amplification = 1 + resistance / RULES.PERCENT_DIVISOR
+            if effect.type == Effect.RELATIVE_SHIELD:
+                relative += effect.value * amplification
+            elif effect.type == Effect.ABSOLUTE_SHIELD:
+                absolute += effect.value * amplification
+            elif effect.type == Effect.RAW_RELATIVE_SHIELD:
+                relative += effect.value
+            elif effect.type == Effect.RAW_ABSOLUTE_SHIELD:
+                absolute += effect.value
+            elif effect.type == Effect.VULNERABILITY:
+                relative -= effect.value
+            elif effect.type == Effect.ABSOLUTE_VULNERABILITY:
+                absolute -= effect.value
+        entity.relativeShield = relative
+        entity.absoluteShield = absolute
 
     def item_uses(self, user: Entity, item) -> int:
         """Nombre d'utilisations d'un item par une entité ce tour."""
