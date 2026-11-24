@@ -81,6 +81,11 @@ def turn():
         decision_lib.approach(me, enemy)
         did_hit = decision_lib.attack(me, enemy)
 
+    # L'ennemi est hors de notre portée mais va se rapprocher : on pose
+    # l'armure MAINTENANT pour encaisser son prochain coup protégé.
+    if not did_hit:
+        decision_lib.prep_shield(me, enemy)
+
     # On n'a toujours pas pu tirer : nos PT sont inutilisés. On lance un
     # buff "un tour avant" si c'est plus rentable que d'attendre
     # l'ouverture du tour suivant (le tour suivant sera amplifié).

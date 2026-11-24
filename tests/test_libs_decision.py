@@ -470,7 +470,8 @@ class OpeningShieldTest(unittest.TestCase):
     def tearDown(self):
         decision_lib.reset_state()
 
-    def _fight(self, chip=None, weapons=None, tp=10):
+    def _fight(self, chip=None, weapons=None, tp=10, enemy_cell=(1, 0),
+               enemy_life=100):
         fight = support.make_fight(
             me=builder.entity(
                 life=100, max_life=100, tp=tp, max_tp=tp, mp=10, max_mp=10,
@@ -479,7 +480,8 @@ class OpeningShieldTest(unittest.TestCase):
                         [support.pistol(damage=10, cost=1)],
                 chips=[chip] if chip else [],
             ),
-            enemies=[builder.entity(life=100, max_life=100, cell=(1, 0))],
+            enemies=[builder.entity(life=enemy_life, max_life=enemy_life,
+                                    cell=enemy_cell)],
         )
         install(fight)
         return fight
@@ -576,6 +578,142 @@ class OpeningShieldTest(unittest.TestCase):
         self.assertFalse(any("Opening shield:" in line
                              for line in fight.logs))
         self.assertTrue(any("Shot #0" in line for line in fight.logs))
+
+    def test_the_opening_shield_is_played_as_soon_as_it_is_ready(self):
+        # L'ennemi frappe peu (2 PV par tour) mais on ne peut pas le tuer :
+        # l'armure est posée quand même, dès qu'elle est prête (son
+        # rapport valeur/PT est moins bon que celui d'un tir, on l'accepte :
+        # c'est de la survie).
+        fight = self._fight(chip=support.helmet_chip(), enemy_life=5000)
+        me = fight.me
+        enemy = fight.enemies[0]
+        self._turn_after(fight, 2)
+
+        decision_lib.attack(me, enemy)
+
+        self.assertTrue(any("Opening shield:" in line
+                            for line in fight.logs))
+
+    def test_the_opening_shield_is_played_on_the_first_turn_if_the_enemy_hits(self):
+        # Premier tour : on ne connaît pas encore les dégâts de l'ennemi,
+        # mais il peut déjà nous frapper : on s'arme quand même (la
+        # protection est estimée).
+        fight = self._fight(chip=support.helmet_chip())
+        me = fight.me
+        enemy = fight.enemies[0]
+        decision_lib.begin_turn(me)
+
+        decision_lib.attack(me, enemy)
+
+        line = next(line for line in fight.logs if "Opening shield:" in line)
+        self.assertIn("(estimated)", line)
+        self.assertEqual(me.absoluteShield, 15)
+
+    def test_the_opening_shield_is_not_played_on_the_first_turn_if_the_enemy_is_far(self):
+        # Premier tour, mais l'ennemi ne peut pas nous atteindre (ni
+        # par sa portée, ni en se rapprochant) : inutile de s'armer.
+        fight = self._fight(chip=support.helmet_chip(), enemy_cell=(3, 0))
+        fight.enemies[0].maxMP = 0
+        fight.enemies[0].mp = 0
+        me = fight.me
+        enemy = fight.enemies[0]
+        decision_lib.begin_turn(me)
+
+        decision_lib.attack(me, enemy)
+
+        self.assertFalse(any("Opening shield:" in line
+                             for line in fight.logs))
+
+
+class PrepShieldTest(unittest.TestCase):
+    """L'armure « un tour avant » : on s'arme avant le premier coup ennemi.
+
+    L'ennemi est hors de notre portée mais va se rapprocher : on pose le
+    bouclier maintenant, pour encaisser son prochain coup protégé.
+    """
+
+    def setUp(self):
+        decision_lib.reset_state()
+
+    def tearDown(self):
+        decision_lib.reset_state()
+
+    def _fight(self, chip=None, enemy_cell=(4, 0), enemy_range=5, enemy_mp=3):
+        """Notre arme ne porte qu'à 1 case : l'ennemi est hors de portée."""
+        enemy_weapon = builder.weapon(
+            "enemy_sword",
+            cost=1,
+            min_range=1,
+            max_range=enemy_range,
+            features=[
+                builder.feature(
+                    builder.Effect.DAMAGE,
+                    builder.Effect.Target.ENEMIES,
+                    30, 30,
+                )
+            ],
+        )
+        fight = support.make_fight(
+            me=builder.entity(
+                life=100, max_life=100, tp=10, max_tp=10, mp=10, max_mp=10,
+                cell=(0, 0),
+                weapons=[support.pistol(range_=1, damage=10, cost=1)],
+                chips=[chip] if chip else [],
+            ),
+            enemies=[builder.entity(
+                life=500, max_life=500, cell=enemy_cell,
+                max_mp=enemy_mp, weapon=enemy_weapon,
+            )],
+        )
+        install(fight)
+        return fight
+
+    def test_the_prep_shield_is_played_before_the_enemy_can_hit_us(self):
+        fight = self._fight(chip=support.helmet_chip())
+        me = fight.me
+        enemy = fight.enemies[0]
+
+        played = decision_lib.prep_shield(me, enemy)
+
+        self.assertTrue(played)
+        self.assertTrue(any("Prep shield:" in line for line in fight.logs))
+        self.assertEqual(me.absoluteShield, 15)
+
+    def test_the_prep_shield_is_not_played_when_the_enemy_is_too_far(self):
+        # L'ennemi est hors de sa propre portée (+ ses PM) : il ne peut
+        # pas nous frapper au tour suivant, inutile de s'armer.
+        fight = self._fight(chip=support.helmet_chip(), enemy_cell=(10, 0))
+        me = fight.me
+        enemy = fight.enemies[0]
+
+        played = decision_lib.prep_shield(me, enemy)
+
+        self.assertFalse(played)
+        self.assertEqual(me.absoluteShield, 0)
+
+    def test_the_prep_shield_is_not_played_when_we_can_shoot(self):
+        # L'ennemi est à portée : l'armure d'ouverture s'applique.
+        fight = self._fight(chip=support.helmet_chip(), enemy_cell=(1, 0))
+        me = fight.me
+        enemy = fight.enemies[0]
+
+        played = decision_lib.prep_shield(me, enemy)
+
+        self.assertFalse(played)
+        self.assertEqual(me.absoluteShield, 0)
+
+    def test_the_prep_shield_is_not_played_when_we_can_kill_the_enemy(self):
+        # L'ennemi est à 20 PV : on le tue au prochain tour, autant ne pas
+        # gaspiller 3 PT d'armure.
+        fight = self._fight(chip=support.helmet_chip())
+        fight.enemies[0].life = 20
+        me = fight.me
+        enemy = fight.enemies[0]
+
+        played = decision_lib.prep_shield(me, enemy)
+
+        self.assertFalse(played)
+        self.assertEqual(me.absoluteShield, 0)
 
 
 class ShotLogTest(unittest.TestCase):

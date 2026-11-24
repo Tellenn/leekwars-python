@@ -326,12 +326,12 @@ def shield_protection(me, o, enemy):
     #
     # Renvoie (dégâts bloqués par tour, coups par tour).
     incoming = _INCOMING
-    if incoming <= 0:
-        return 0.0, 0
     parts = o["parts"]
     if parts["shield_absolute"] <= 0 and parts["shield_relative"] <= 0:
         return 0.0, 0
     hits = threat_lib.hits_per_turn(enemy)
+    if incoming <= 0:
+        return 0.0, hits
     per_hit = incoming / hits
     blocked = min(per_hit, parts["shield_absolute"])
     blocked += per_hit * parts["shield_relative"] / 100
@@ -351,10 +351,10 @@ def shield_survival(me, o, enemy):
     #   without : tours avant de mourir sans le bouclier
     #   with    : tours avant de mourir avec le bouclier
     incoming = _INCOMING
-    if incoming <= 0:
-        return {"extra": 0, "blocked": 0.0, "hits": 0,
-                "without": 999, "with": 999}
     blocked, hits = shield_protection(me, o, enemy)
+    if incoming <= 0:
+        return {"extra": 0, "blocked": 0.0, "hits": hits,
+                "without": 999, "with": 999}
     if blocked <= 0:
         return {"extra": 0, "blocked": 0.0, "hits": hits,
                 "without": 999, "with": 999}
@@ -368,7 +368,7 @@ def shield_survival(me, o, enemy):
             "hits": hits, "without": without, "with": with_shield}
 
 
-def shield_value(me, o, usable, enemy):
+def shield_value(me, o, usable, enemy, estimate=False):
     # Valeur d'une puce de bouclier, sur l'échelle "valeur / TP".
     #
     # On ne modélise pas les dégâts de l'ennemi : on les mesure (voir
@@ -378,11 +378,37 @@ def shield_value(me, o, usable, enemy):
     #
     # HYPOTHÈSE : un dégât empêché vaut un dégât infligé (le jeu ne
     # donne pas de valeur absolue aux PV).
+    #
+    # `estimate` = True : les dégâts de l'ennemi ne sont pas encore connus
+    # (premier tour du combat) : on estime la protection à partir du
+    # bouclier et du nombre de coups qu'il peut nous infliger.
     if not USE_SHIELD_CHIPS:
         return 0.0
     incoming = _INCOMING
-    if incoming <= 0:
+    parts = o["parts"]
+    duration = parts["shield_turns"]
+    if duration <= 0:
+        duration = 1
+    hits = threat_lib.hits_per_turn(enemy)
+    # Le tour de dégâts est calculé sans exiger la portée (l'ennemi peut
+    # être hors de portée : le bouclier nous protège quand même au tour
+    # suivant).
+    per_turn = damage_per_turn(me, usable, enemy, require_range=False)
+    if per_turn <= 0:
         return 0.0
+    if incoming <= 0:
+        # Dégâts ennemis inconnus : on estime (le bouclier bloque son
+        # montant à chaque coup).
+        if not estimate:
+            return 0.0
+        blocked = parts["shield_absolute"] * hits
+        if blocked <= 0:
+            return 0.0
+        # On ne s'arme pas si l'ennemi va mourir d'un seul tour de tir :
+        # autant le finir.
+        if enemy.life <= per_turn:
+            return 0.0
+        return blocked * duration
     survival = shield_survival(me, o, enemy)
     blocked = survival["blocked"]
     if blocked <= 0:
@@ -393,17 +419,9 @@ def shield_value(me, o, usable, enemy):
     if life <= incoming and life > incoming - blocked:
         return MANDATORY
     # Si l'on tue l'ennemi avant de mourir, la protection ne vaut rien :
-    # on garde le tempo offensif. Le tour de dégâts est calculé sans
-    # exiger la portée (l'ennemi peut être hors de portée : le bouclier
-    # nous protège quand même au tour suivant).
-    per_turn = damage_per_turn(me, usable, enemy, require_range=False)
-    if per_turn <= 0:
-        return 0.0
+    # on garde le tempo offensif.
     if _ceil_div(enemy.life, per_turn) <= survival["without"]:
         return 0.0
-    duration = o["parts"]["shield_turns"]
-    if duration <= 0:
-        duration = 1
     return blocked * duration
 
 
@@ -427,26 +445,14 @@ def shield_plan(me, usable, enemy):
     """Armure d'ouverture : on pose le bouclier AVANT de tirer.
 
     Le bouclier n'est pas un « ratio » : c'est de la survie. Kepo est un
-    build force (aucune protection) : le bouclier est donc joué en
-    ouverture de tour dès que sa protection vaut au moins un tir (le
-    dégât que l'on perdrait à ne pas tirer), même si son rapport
-    valeur/PT est moins bon que celui d'un tir.
+    build force (aucune protection) : l'armure est donc posée en ouverture
+    de tour **dès qu'elle est prête** (plus de cooldown), sauf si l'on
+    peut tuer l'ennemi : autant le finir dans ce cas.
 
     Renvoie (option, valeur) ou (None, 0).
     """
     best = None
     best_value = 0.0
-    # Le meilleur tir disponible : l'armure est jouée en ouverture quand
-    # elle vaut au moins un tir (même échelle "valeur / PT"). C'est la
-    # même comparaison que celle de la boucle de tir, mais l'armure passe
-    # EN PREMIER (c'est de la survie, pas du DPS).
-    reference_score = 0.0
-    for o in usable:
-        if o["kind"] != "weapon" or not o["has_damage"]:
-            continue
-        score, value = option_score(me, o, usable, enemy)
-        if score > reference_score:
-            reference_score = score
     for o in usable:
         if o["kind"] != "chip" or o["used"]:
             continue
@@ -455,17 +461,62 @@ def shield_plan(me, usable, enemy):
         if o["cost"] > me.tp:
             continue
         value = shield_value(me, o, usable, enemy)
+        if value <= 0 and _INCOMING <= 0 and threat_lib.in_reach(enemy, me):
+            # On ne connaît pas encore les dégâts de l'ennemi (premier
+            # tour du combat) mais il va nous frapper : on s'arme quand
+            # même, pour encaisser son premier coup protégé.
+            value = shield_value(me, o, usable, enemy, estimate=True)
         if value <= 0:
             continue  # le bouclier ne protège de rien : inutile
-        score = value / o["cost"] if o["cost"] > 0 else 0.0
-        if value < MANDATORY and score < reference_score:
-            continue  # un tir est plus rentable : on tire
         if value < MANDATORY and not can_still_shoot(me, usable, o["cost"]):
             continue  # il nous laisserait sans aucun tir
         if value > best_value:
             best_value = value
             best = o
     return best, best_value
+
+
+def prep_shield(me, enemy):
+    """Armure « un tour avant » : l'ennemi va nous frapper au tour suivant.
+
+    On est hors de portée (aucun tir possible ce tour) mais l'ennemi va se
+    rapprocher et nous atteindre : on pose le bouclier MAINTENANT, pour
+    encaisser son coup protégé. C'est l'équivalent du « buff un tour
+    avant » (`prep_buff`) pour l'armure.
+
+    Renvoie True si un bouclier a été joué.
+    """
+    usable, options = build_options(me)
+    if best_attack_now(me, usable, enemy) != None:
+        return False  # on peut tirer : l'armure d'ouverture s'applique
+    # L'ennemi peut-il nous atteindre au tour suivant (après son
+    # déplacement) ? Sinon, inutile de s'armer.
+    if not threat_lib.in_reach(enemy, me):
+        return False
+    best = None
+    best_value = 0.0
+    for o in usable:
+        if o["kind"] != "chip" or o["used"]:
+            continue
+        if not o["is_shield"] or o["has_damage"]:
+            continue
+        if o["cost"] > me.tp:
+            continue
+        # Les dégâts de l'ennemi ne sont pas toujours connus (premier
+        # tour du combat) : on estime alors la protection.
+        value = shield_value(me, o, usable, enemy, estimate=True)
+        if value <= 0:
+            continue
+        if value > best_value:
+            best_value = value
+            best = o
+    if best == None:
+        return False
+    details = "; ".join(best["parts"]["details"])
+    logs_lib.log(f"Prep shield: {best['obj']} [{details}] "
+                 f"(the enemy will hit us on the next turn)")
+    execute(me, best, enemy, 0)
+    return True
 
 
 def buff_key(o):
@@ -928,15 +979,26 @@ def attack(me, enemy):
     if opening_shield != None:
         survival = shield_survival(me, opening_shield, enemy)
         details = "; ".join(opening_shield["parts"]["details"])
-        duration = opening_shield["parts"]["shield_turns"]
+        parts = opening_shield["parts"]
+        duration = parts["shield_turns"]
         if duration <= 0:
             duration = 1
+        hits = survival["hits"]
+        if survival["blocked"] > 0:
+            protection = (f"~{survival['blocked']:.0f} dmg blocked per turn "
+                          f"over {hits} hit(s), "
+                          f"~{survival['blocked'] * duration:.0f} dmg prevented "
+                          f"over {duration} turn(s)")
+        else:
+            # Dégâts de l'ennemi encore inconnus : on ne peut afficher
+            # qu'une estimation (le bouclier bloque son montant par coup).
+            protection = (f"~{parts['shield_absolute']:.0f} dmg blocked per hit "
+                          f"over {hits} hit(s), "
+                          f"~{parts['shield_absolute'] * hits * duration:.0f} "
+                          f"dmg prevented over {duration} turn(s) (estimated)")
         urgent = " (sauve la mort)" if shield_worth >= MANDATORY else ""
         logs_lib.log(f"Opening shield: {opening_shield['obj']} [{details}] "
-                     f"(~{survival['blocked']:.0f} dmg blocked per turn over "
-                     f"{survival['hits']} hit(s), "
-                     f"~{survival['blocked'] * duration:.0f} dmg prevented "
-                     f"over {duration} turn(s)){urgent}")
+                     f"({protection}){urgent}")
         execute(me, opening_shield, enemy, 0)
 
     # Build "force" : le buff part AVANT des tirs, il multiplie tous les

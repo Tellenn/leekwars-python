@@ -122,9 +122,9 @@ Conséquences sur le code :
 - les **puces de bouclier** sont modélisées et jouées en **ouverture de
   tour** (`decision_lib.shield_plan()`) : le bouclier n'est pas un « ratio »,
   c'est de la survie. Un build force (Kepo) n'a aucune protection, donc
-  l'armure est posée **avant les tirs** dès que sa protection vaut au
-  moins un tir, même si son rapport valeur/PT est moins bon que celui
-  d'un tir (on accepte de perdre un tir pour gagner de la survie).
+  l'armure est posée **avant les tirs dès qu'elle est prête** (plus de
+  cooldown), même si son rapport valeur/PT est moins bon que celui d'un
+  tir — sauf si l'on peut tuer l'ennemi : autant le finir dans ce cas.
   - **le bouclier absolu bloque un montant par COUP** (fr/Résistance :
     `Final = Base * (1 - BouclierRelatif/100) - BouclierAbsolu`, appliqué
     à chaque coup) : sa valeur dépend donc du nombre de coups que
@@ -138,11 +138,16 @@ Conséquences sur le code :
     **mesurés** d'un tour à l'autre (`decision_lib.begin_turn()` compare
     nos PV de la fin du tour précédent à nos PV actuels) ;
   - un bouclier qui **évite notre mort** passe avant tout (`MANDATORY`) ;
-    un bouclier inutile (l'ennemi ne fait presque pas de dégâts) est
-    laissé de côté : on garde le tempo offensif ;
+    un bouclier inutile (l'ennemi ne fait presque pas de dégâts, ou on
+    peut le tuer) est laissé de côté : on garde le tempo offensif ;
   - exception : si le bouclier nous laisserait **sans aucun tir**
     (`decision_lib.can_still_shoot()`), on ne le joue que s'il sauve
     notre mort ;
+  - **armure « un tour avant »** (`decision_lib.prep_shield()`) : quand on
+    ne peut pas tirer mais que l'ennemi va nous atteindre au tour suivant
+    (il est dans sa zone de menace), on pose le bouclier tout de suite,
+    pour encaisser son premier coup protégé. C'est l'équivalent du
+    « buff un tour avant » pour l'armure ;
 - la **portée de l'ennemi est modélisée** (`libs/threat_lib.py`) : sa zone
   de menace est le disque de rayon `portée de son arme + ses PM` centré sur
   sa case. Quand on ne peut pas le toucher, on se place **hors de cette
@@ -160,11 +165,10 @@ Flux d'un tour (`ai.turn()`) :
    (ratio dégâts/PT) si aucune n'est en main.
 4. `decision_lib.attack()` — **armure d'ouverture d'abord** (le bouclier
    est de la survie, pas un ratio : il est posé avant les tirs dès qu'il
-   achète un tour de survie), puis **buff d'ouverture** (s'il est
-   rentable), puis boucle : on **re-score** toutes les options à chaque
-   itération (les PV, les PT et les boucliers changent), on exécute la
-   meilleure (attaque / soin / buff / bouclier), on mesure les dégâts
-   réels vs attendus.
+   est prêt), puis **buff d'ouverture** (s'il est rentable), puis boucle :
+   on **re-score** toutes les options à chaque itération (les PV, les PT
+   et les boucliers changent), on exécute la meilleure (attaque / soin /
+   buff / bouclier), on mesure les dégâts réels vs attendus.
 5. Si rien n'était à portée : `decision_lib.approach()` — le plan dépend
    de ce qui bloque (`decision_lib.firing_blocker()`) :
    - **trop près** (portée minimale) : on recule jusqu'à la case de tir ;
@@ -175,7 +179,9 @@ Flux d'un tour (`ai.turn()`) :
      place hors de la zone de menace de l'ennemi
      (`threat_lib.kite_distance()`), sinon on se rapproche simplement ;
    puis on rejoue le calcul (la rentabilité change avec la distance).
-6. Si on n'a toujours pas pu tirer : `decision_lib.prep_buff()` — buff
+6. Si on n'a toujours pas pu tirer : `decision_lib.prep_shield()` puis
+   `decision_lib.prep_buff()` — armure « un tour avant » (l'ennemi va nous
+   frapper au tour suivant : on pose le bouclier maintenant) puis buff
    « un tour avant » (les PT sont inutilisés, le tour suivant sera
    amplifié) s'il bat l'attente de l'ouverture du tour suivant.
 7. `decision_lib.hide()` — **seulement si `HIDE_AFTER_ATTACK`** (par défaut
@@ -453,9 +459,10 @@ dans `scenarios/duel.json`).
 | 40 | Le **coût du changement d'arme** n'était pas remis à jour après un `setWeapon` : l'IA croyait pouvoir ré-équiper gratuitement l'arme précédente (et aurait tiré avec l'arme en main en croyant tirer avec l'autre) | `libs/decision_lib.py` | **corrigé** — `refresh_switch_flags()` recalcule le coût (1 PT) de chaque arme après un changement ; `execute()` vérifie le retour de `setWeapon` et refuse de tirer si le changement est refusé |
 | 41 | L'IA **se cachait même quand elle n'avait pas tiré** : en coupant la ligne de vue de la cible, elle s'interdisait tout tir ultérieur (combat #54913368 : 64 tours sans un seul tir) | `Kepo_solo.py`, `libs/decision_lib.py` | **corrigé** — la fuite (`HIDE_AFTER_ATTACK`) n'a lieu que si l'IA a réellement tiré |
 | 42 | Le **plan de placement** ignorait la portée minimale et l'alignement : l'IA se parquait à une distance où aucune de ses armes ne pouvait toucher la cible, et ne cherchait pas à s'aligner | `libs/threat_lib.py`, `libs/decision_lib.py` | **corrigé** — fenêtres de tir par arme (`my_windows`), distance de tir (`firing_distance`), case de tir (`firing_cell`) ; reculer si l'ennemi est trop près, s'aligner sinon |
-| 43 | L'armure (puce de bouclier) n'était jouée que si son **rapport valeur/PT** battait celui d'un tir : sur un build force sans aucune protection, l'IA restait sans bouclier jusqu'au dernier moment, et le bouclier pouvait être joué **après** des tirs (donc après avoir subi le coup) | `libs/decision_lib.py` | **corrigé** — `shield_plan()` : l'armure est jouée en **ouverture de tour**, avant les tirs, dès que sa protection vaut au moins un tir ; `can_still_shoot()` interdit de se retrouver sans aucun tir (sauf si le bouclier sauve la mort) |
+| 43 | L'armure (puce de bouclier) n'était jouée que si son **rapport valeur/PT** battait celui d'un tir : sur un build force sans aucune protection, l'IA restait sans bouclier jusqu'au dernier moment, et le bouclier pouvait être joué **après** des tirs (donc après avoir subi le coup) | `libs/decision_lib.py` | **corrigé** — `shield_plan()` : l'armure est jouée en **ouverture de tour**, avant les tirs, **dès qu'elle est prête** (plus de cooldown), sauf si l'on peut tuer l'ennemi ; `can_still_shoot()` interdit de se retrouver sans aucun tir (sauf si le bouclier sauve la mort) |
 | 44 | Le **bouclier absolu** bloque un montant fixe **par coup**, mais le modèle le comptait **par tour** : la protection réelle d'une puce comme le Casque (+15) était sous-estimée d'autant de fois que l'ennemi nous frappait (pistolet : 4 coups/tour, machine gun : 9) | `libs/decision_lib.py`, `libs/threat_lib.py` | **corrigé** — `threat_lib.hits_per_turn()` (maxUses × effets de dégâts de l'arme adverse) et `shield_protection()` : la valeur du bouclier = les dégâts empêchés × la durée |
 | 45 | La valeur d'un tour de survie reste approchée : `damage_per_turn()` estime le nombre de tirs par `TP / coût` sans tenir compte du plafond `maxUses`, et l'hypothèse « un dégât empêché = un dégât infligé » ne donne aucune valeur aux PV économisés quand le nombre de tours ne change pas | `libs/decision_lib.py` | hypothèse assumée — à confronter à un combat de test |
+| 46 | L'armure n'était posée qu'**après** avoir encaissé le coup de l'ennemi : on ne pouvait pas s'armer avant le premier contact, quand l'ennemi approche hors de notre portée | `libs/decision_lib.py`, `Kepo_solo.py` | **corrigé** — `prep_shield()` : armure « un tour avant » (comme `prep_buff()` pour les buffs) : si on ne peut pas tirer et que l'ennemi est dans sa zone de menace, on pose le bouclier pour encaisser son prochain coup protégé |
 
 ---
 
