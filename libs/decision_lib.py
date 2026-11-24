@@ -89,6 +89,15 @@ def weapon_uses(me, o, budget=None):
 def attack_value(me, o, enemy):
     # Valeur d'une attaque sur le tour : (dégâts + vol de vie) par tir ×
     # nombre de tirs réellement possibles. Renvoie (valeur, score, tirs).
+    #
+    # Une arme est tirée autant de fois que le permettent le plafond
+    # `maxUses` et les PT ; une puce est jouée **une fois** par tour.
+    if o["kind"] == "chip":
+        per_use = (analysis_lib.expected_damage(o["parts"], enemy, me)
+                   + analysis_lib.expected_lifesteal(o["parts"], enemy, me))
+        spent = o["cost"] + o["switch"]
+        score = per_use / spent if spent > 0 else 0.0
+        return per_use, score, 1
     uses = weapon_uses(me, o)
     if uses <= 0:
         return 0.0, 0.0, 0
@@ -567,7 +576,8 @@ def attack(me, enemy):
                 # vide...). L'option reste valable, on ne la neutralise pas.
                 logs_lib.log(f"Shot #{shot} ({best['obj']}): 0 dmg "
                              f"(expected {expected:.1f})")
-        shot += 1
+        if was_attack:
+            shot += 1
     return did_hit
 
 

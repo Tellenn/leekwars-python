@@ -444,5 +444,60 @@ class EquipmentChoiceTest(unittest.TestCase):
         self.assertIs(fight.me.weapon, slow_but_repeatable)
 
 
+class ChainedOptionsTest(unittest.TestCase):
+    """Enchaînement : arme plafonnée, changement d'arme, puce, puis plus rien."""
+
+    def setUp(self):
+        decision_lib.reset_state()
+
+    def tearDown(self):
+        decision_lib.reset_state()
+
+    def test_ai_chains_options_when_the_weapon_reaches_its_limit(self):
+        # 10 PT. Arme en main : pistolet plafonné à 1 tir (10 dégâts).
+        # Autre arme : fusil (3 PT, 30 dégâts, sans plafond).
+        # Puce : 50 dégâts pour 2 PT (meilleure affaire que le fusil).
+        pistol = builder.weapon(
+            "pistolet", cost=1, min_range=0, max_range=3, max_uses=1,
+            features=[builder.feature(
+                Effect.DAMAGE, Effect.Target.ENEMIES, 10, 10)],
+        )
+        rifle = builder.weapon(
+            "fusil", cost=3, min_range=0, max_range=3, max_uses=0,
+            features=[builder.feature(
+                Effect.DAMAGE, Effect.Target.ENEMIES, 30, 30)],
+        )
+        chip = builder.chip(
+            "super-puce", cost=2, min_range=0, max_range=3,
+            features=[builder.feature(
+                Effect.DAMAGE, Effect.Target.ENEMIES, 50, 50)],
+        )
+        fight = support.make_fight(
+            me=builder.entity(
+                life=100, max_life=100, tp=10, max_tp=10, mp=10, max_mp=10,
+                cell=(0, 0), weapons=[pistol, rifle], chips=[chip],
+            ),
+            enemies=[builder.entity(life=500, max_life=500, cell=(1, 0))],
+        )
+        install(fight)
+        fight.me.setWeapon(pistol)
+
+        decision_lib.attack(fight.me, fight.enemies[0])
+
+        logs = fight.logs
+        # La puce (25 dégâts/PT) passe avant le pistolet (10/PT) ; ensuite
+        # le pistolet plafonné à 1 tir, puis changement d'arme.
+        self.assertTrue(any("Chip: super-puce" in line for line in logs))
+        self.assertTrue(any("Shot #0" in line and "pistolet" in line
+                            for line in logs))
+        self.assertTrue(any("Switch: fusil" in line for line in logs))
+        self.assertTrue(any("Shot #1" in line and "fusil" in line
+                            for line in logs))
+        # 50 (puce) + 10 (pistolet) + 30 (fusil) = 90 dégâts.
+        self.assertEqual(fight.enemies[0].life, 410)
+        # Le cycle s'arrête quand plus rien n'est utilisable.
+        self.assertTrue(any("No usable option" in line for line in logs))
+
+
 if __name__ == "__main__":
     unittest.main()
